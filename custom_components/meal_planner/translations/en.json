@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meal Planner",
+        "description": "Set for how many people you usually cook and how many days the plan shows in the card. Both can be changed later.",
+        "data": {
+          "household_size": "People in the household",
+          "horizon_days": "Days shown in the plan"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Meal Planner is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Meal Planner",
+        "data": {
+          "household_size": "People in the household",
+          "horizon_days": "Days shown in the plan"
+        }
+      }
+    }
+  }
+}

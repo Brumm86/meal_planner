@@ -1,0 +1,56 @@
+"""Constants for the Meal Planner integration."""
+
+from __future__ import annotations
+
+from typing import Final
+
+DOMAIN: Final = "meal_planner"
+
+# Frontend card (plain script, no ES-module syntax - see __init__.py).
+CARD_URL_PATH: Final = "/meal_planner_static/meal-planner-card.js"
+CARD_FILENAME: Final = "meal-planner-card.js"
+
+# Config entry (data) / options
+CONF_HOUSEHOLD_SIZE: Final = "household_size"
+CONF_HORIZON_DAYS: Final = "horizon_days"
+
+DEFAULT_HOUSEHOLD_SIZE: Final = 4
+MIN_HOUSEHOLD_SIZE: Final = 1
+MAX_HOUSEHOLD_SIZE: Final = 20
+
+DEFAULT_HORIZON_DAYS: Final = 10
+MIN_HORIZON_DAYS: Final = 3
+MAX_HORIZON_DAYS: Final = 28
+
+# Persistent storage (one Store per collection, see storage.py).
+STORAGE_VERSION: Final = 1
+STORAGE_KEY_RECIPES: Final = f"{DOMAIN}.recipes"
+STORAGE_KEY_INGREDIENTS: Final = f"{DOMAIN}.ingredients"
+STORAGE_KEY_PLAN: Final = f"{DOMAIN}.plan"
+
+# Fixed unit list (Zusammenfassung: "Zutatenkatalog mit fester Einheitenliste").
+# unit -> (dimension, factor to the dimension's base unit). Units within one
+# dimension convert into each other (g/kg, ml/l); every other unit is its own
+# dimension, so e.g. "Stück" and "g" of the same ingredient stay two separate
+# shopping-list positions.
+UNITS: Final[dict[str, tuple[str, float]]] = {
+    "g": ("mass", 1.0),
+    "kg": ("mass", 1000.0),
+    "ml": ("volume", 1.0),
+    "l": ("volume", 1000.0),
+    "Stück": ("piece", 1.0),
+    "EL": ("tablespoon", 1.0),
+    "TL": ("teaspoon", 1.0),
+    "Bund": ("bunch", 1.0),
+    "Packung": ("pack", 1.0),
+    "Dose": ("can", 1.0),
+    "Zehe": ("clove", 1.0),
+    "Prise": ("pinch", 1.0),
+}
+
+# Plan entry kinds
+PLAN_KIND_RECIPE: Final = "recipe"
+PLAN_KIND_TEXT: Final = "text"
+
+# Websocket commands
+WS_PREFIX: Final = f"{DOMAIN}/"

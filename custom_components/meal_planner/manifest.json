@@ -1,0 +1,14 @@
+{
+  "domain": "meal_planner",
+  "name": "Meal Planner",
+  "codeowners": ["@brumm"],
+  "config_flow": true,
+  "dependencies": ["http", "frontend", "websocket_api"],
+  "documentation": "https://github.com/brumm/meal_planner",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/brumm/meal_planner/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meal Planner",
+        "description": "Lege fest, für wie viele Personen standardmäßig gekocht wird und wie viele Tage der Plan in der Karte anzeigt. Beides lässt sich später ändern.",
+        "data": {
+          "household_size": "Personen im Haushalt",
+          "horizon_days": "Angezeigte Planungstage"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Meal Planner ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Meal Planner",
+        "data": {
+          "household_size": "Personen im Haushalt",
+          "horizon_days": "Angezeigte Planungstage"
+        }
+      }
+    }
+  }
+}
