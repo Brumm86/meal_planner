@@ -16,7 +16,7 @@
 (function () {
   "use strict";
 
-  var CARD_VERSION = "0.1.1";
+  var CARD_VERSION = "0.1.2";
   var QUICK_TEXTS = ["Reste", "Auswärts", "Bestellen"];
 
   function esc(value) {
@@ -103,8 +103,13 @@
     ".ritem{display:block;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid var(--divider-color);padding:9px 6px;color:var(--primary-text-color)}" +
     ".ritem:hover,.ritem.sel{background:var(--secondary-background-color)}" +
     ".ritem .sub{font-size:.85em;color:var(--secondary-text-color)}" +
-    ".ing{display:grid;grid-template-columns:1fr 80px 100px auto;gap:6px;margin-bottom:6px}" +
-    ".ing input,.ing select{width:100%}" +
+    ":host(.narrow) .split{grid-template-columns:1fr}" +
+    ":host(.narrow) .day{grid-template-columns:1fr auto}" +
+    ":host(.narrow) .day .date{grid-column:1/-1}" +
+    ".ing{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:6px;margin-bottom:10px}" +
+    ".ing [data-l=name]{grid-column:1/-1}" +
+    ".ing input,.ing select{width:100%;min-width:0}" +
+    ".split>*{min-width:0}" +
     ".row{display:flex;gap:12px;flex-wrap:wrap}" +
     ".row>label.field{flex:1;min-width:120px}" +
     ".toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}" +
@@ -157,9 +162,24 @@
     connectedCallback() {
       if (this._hass && !this._unsub && !this._subscribing) this._subscribe();
       this._render();
+      // Layout follows the width of the CARD (dashboard columns), not the window.
+      var self = this;
+      var apply = function () {
+        var w = self.getBoundingClientRect().width;
+        if (w) self.classList.toggle("narrow", w < 720);
+      };
+      apply();
+      if (typeof ResizeObserver !== "undefined" && !this._ro) {
+        this._ro = new ResizeObserver(apply);
+        this._ro.observe(this);
+      }
     }
 
     disconnectedCallback() {
+      if (this._ro) {
+        this._ro.disconnect();
+        this._ro = null;
+      }
       if (this._unsub) {
         try {
           this._unsub();
@@ -724,6 +744,23 @@
   if (!customElements.get("meal-planner-card")) {
     customElements.define("meal-planner-card", MealPlannerCard);
   }
+  // Same recovery as in family_tasks / heat_pilot: some Android WebViews swap
+  // out window.customElements after this script ran, so Lovelace would not
+  // find the element. Re-define it once <home-assistant> is known to the
+  // registry that is current at that point (the guard avoids a double define).
+  if (typeof customElements !== "undefined" && customElements.whenDefined) {
+    customElements
+      .whenDefined("home-assistant")
+      .then(function () {
+        if (!customElements.get("meal-planner-card")) {
+          customElements.define("meal-planner-card", MealPlannerCard);
+        }
+      })
+      .catch(function () {
+        /* not inside a normal HA frontend - nothing to recover */
+      });
+  }
+
   window.customCards = window.customCards || [];
   window.customCards.push({
     type: "meal-planner-card",

@@ -2,7 +2,7 @@
 
 Home-Assistant-Integration zur Planung des Mittagessens: Rezepte mit strukturierten Zutaten, ein fortlaufender Speiseplan und (ab Etappe 2) eine Einkaufsliste mit Übergabe an Bring.
 
-## Stand: Etappe 1 (v0.1.1)
+## Stand: Etappe 1 (v0.1.2)
 
 - Rezepte (Name, Basisportionen, Zutaten, Dauer, Tags, Zubereitung, Notiz/Link, „zuletzt geplant“)
 - Zutatenkatalog mit Autovervollständigung und fester Einheitenliste (g, kg, ml, l, Stück, EL, TL, Bund, Packung, Dose, Zehe, Prise)
