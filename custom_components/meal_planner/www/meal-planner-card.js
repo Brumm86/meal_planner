@@ -16,7 +16,7 @@
 (function () {
   "use strict";
 
-  var CARD_VERSION = "0.1.0";
+  var CARD_VERSION = "0.1.1";
   var QUICK_TEXTS = ["Reste", "Auswärts", "Bestellen"];
 
   function esc(value) {
@@ -247,7 +247,7 @@
         body = '<div class="muted">Lade…</div>';
       } else {
         body =
-          (this._error ? '<div class="error"><span>' + esc(this._error) + '</span><button class="iconbtn" data-action="dismiss-error" style="color:#fff">✕</button></div>' : "") +
+          (this._error && !this._editor ? this._errorBanner() : "") +
           '<div class="tabs">' +
           this._tabButton("plan", "Plan") +
           this._tabButton("recipes", "Rezepte") +
@@ -257,6 +257,12 @@
       }
       var title = this._config.title ? "<h2 style=\"margin:0 0 8px\">" + esc(this._config.title) + "</h2>" : "";
       root.innerHTML = "<style>" + STYLE + "</style><ha-card>" + title + body + "</ha-card>" + this._datalists();
+      var banner = root.getElementById("mp-error");
+      if (banner && banner.scrollIntoView) banner.scrollIntoView({ block: "nearest" });
+    }
+
+    _errorBanner() {
+      return '<div class="error" id="mp-error"><span>' + esc(this._error) + '</span><button class="iconbtn" data-action="dismiss-error" style="color:#fff">✕</button></div>';
     }
 
     _tabButton(id, label) {
@@ -451,6 +457,7 @@
       html += '<label class="field"><span>Zubereitung</span><textarea data-f="instructions">' + esc(d.instructions) + "</textarea></label>";
       html += '<label class="field"><span>Notiz / Link</span><textarea data-f="notes">' + esc(d.notes) + "</textarea></label>";
       if (!isNew) html += '<label class="field"><span>Zuletzt geplant (JJJJ-MM-TT, leer = noch nie)</span><input data-f="last_planned" value="' + esc(d.last_planned) + '" /></label>';
+      if (this._error) html += '<div style="margin-top:12px">' + this._errorBanner() + "</div>";
       html += '<div class="toolbar" style="margin-top:12px"><button class="btn" data-action="save-recipe">Speichern</button><button class="btn secondary" data-action="cancel-edit">Abbrechen</button>';
       if (!isNew) html += '<span style="flex:1"></span>' + (this._confirmDelete ? '<button class="btn danger" data-action="delete-recipe">Wirklich löschen?</button>' : '<button class="btn danger" data-action="ask-delete">Löschen</button>');
       html += "</div>";
@@ -547,14 +554,14 @@
         this._render();
         return;
       }
-      // Picking a known ingredient pre-fills its usual unit.
-      if (t.getAttribute && t.getAttribute("data-l") === "name") {
+      var kind = t.getAttribute ? t.getAttribute("data-l") : null;
+      var row = kind && t.closest ? t.closest(".ing") : null;
+      if (kind === "unit" && row) row.setAttribute("data-unit-touched", "1");
+      // Picking a known ingredient pre-fills its usual unit (unless the unit was chosen by hand).
+      if (kind === "name" && row && !row.getAttribute("data-unit-touched")) {
         var known = this._ingredientByName(t.value);
-        var row = t.closest(".ing");
-        if (known && known.default_unit && row) {
-          var unitSel = row.querySelector('[data-l="unit"]');
-          if (unitSel && !unitSel.value) unitSel.value = known.default_unit;
-        }
+        var unitSel = row.querySelector('[data-l="unit"]');
+        if (known && known.default_unit && unitSel) unitSel.value = known.default_unit;
       }
     }
 
@@ -641,13 +648,13 @@
           break;
         case "add-line":
           this._syncDraft();
-          this._editor.draft.ingredients.push({ name: "", amount: "", unit: "" });
+          this._editor.draft.ingredients.push({ name: "", amount: "", unit: "g" });
           this._render();
           break;
         case "remove-line":
           this._syncDraft();
           this._editor.draft.ingredients.splice(Number(el.getAttribute("data-line")), 1);
-          if (!this._editor.draft.ingredients.length) this._editor.draft.ingredients.push({ name: "", amount: "", unit: "" });
+          if (!this._editor.draft.ingredients.length) this._editor.draft.ingredients.push({ name: "", amount: "", unit: "g" });
           this._render();
           break;
         case "add-tag": {
