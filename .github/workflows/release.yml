@@ -1,0 +1,49 @@
+name: Auto Release on Version Bump
+
+# Erstellt automatisch einen Git-Tag + GitHub Release, sobald sich die
+# "version" in custom_components/meal_planner/manifest.json ändert.
+# HACS erkennt neue Releases und zeigt sie in Home Assistant als Update an.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "custom_components/meal_planner/manifest.json"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Version aus manifest.json lesen
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' custom_components/meal_planner/manifest.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Prüfen ob Tag bereits existiert
+        id: check_tag
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Release erstellen
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            --target "${{ github.sha }}"
