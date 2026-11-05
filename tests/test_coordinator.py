@@ -10,7 +10,7 @@ import voluptuous as vol
 from homeassistant.util import dt as dt_util
 
 from custom_components.meal_planner.coordinator import MealPlannerError
-from custom_components.meal_planner.storage import similarity_key
+from custom_components.meal_planner.storage import similarity_key, sort_key
 
 
 def _day(offset: int) -> str:
@@ -229,6 +229,26 @@ async def test_rename_ingredient_must_stay_unique(hass, init_integration) -> Non
 )
 def test_similarity_key_merges_spelling_variants(a: str, b: str) -> None:
     assert similarity_key(a) == similarity_key(b)
+
+
+async def test_umlauts_and_eszett_are_stored_composed_and_sorted_naturally(
+    hass, init_integration
+) -> None:
+    coordinator = init_integration.runtime_data
+    # "a" + combining diaeresis (what macOS/iOS keyboards may send) -> "ä".
+    decomposed = await _ing(coordinator, "K\u0061\u0308se", "g")
+    assert decomposed["name"] == "Käse"
+    assert coordinator.ingredients.find_by_name("Käse")["id"] == decomposed["id"]
+    with pytest.raises(MealPlannerError) as err:
+        await coordinator.async_save_ingredient(None, {"name": "KÄSE"})
+    assert err.value.code == "ingredient_exists"
+
+    await _ing(coordinator, "Soße", "ml")
+    await _ing(coordinator, "Äpfel", "Stück")
+    await _ing(coordinator, "Zucker", "g")
+    names = [i["name"] for i in coordinator.build_snapshot()["ingredients"]]
+    assert names == ["Äpfel", "Käse", "Soße", "Zucker"]
+    assert sort_key("Äpfel") < sort_key("Zucker")
 
 
 @pytest.mark.parametrize(("a", "b"), [("Mehl", "Milch"), ("Reis", "Reisnudeln"), ("Salz", "Zucker")])

@@ -16,6 +16,7 @@ marking past plan days) is in ``coordinator.py``.
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import date as date_cls
 from typing import Any
 
@@ -42,6 +43,20 @@ _UMLAUTS = str.maketrans({"ä": "a", "ö": "o", "ü": "u", "ß": "ss"})
 _PLURAL_SUFFIXES = ("en", "er", "n", "e", "s")
 
 
+def nfc(text: str) -> str:
+    """Compose umlauts: macOS/iOS keyboards may send "u" + U+0308 instead of "ü".
+
+    Stored and compared names are always the composed form, so "Käse" typed on
+    different devices is one and the same string.
+    """
+    return unicodedata.normalize("NFC", text)
+
+
+def sort_key(name: str) -> str:
+    """Alphabetical key that sorts umlauts like their base letter ("Äpfel" under A)."""
+    return nfc(name).casefold().translate(_UMLAUTS)
+
+
 def similarity_key(name: str) -> str:
     """Spelling-insensitive key used to spot near-duplicate ingredient names.
 
@@ -49,7 +64,7 @@ def similarity_key(name: str) -> str:
     ignored, so "Zwiebel" / "Zwiebeln" and "Tomate" / "Tomaten" share a key.
     It is only a heuristic for *warning* the user - never for blocking.
     """
-    key = "".join(ch for ch in name.casefold().translate(_UMLAUTS) if ch.isalnum())
+    key = "".join(ch for ch in sort_key(name) if ch.isalnum())
     for suffix in _PLURAL_SUFFIXES:
         if key.endswith(suffix) and len(key) - len(suffix) >= 2:
             return key[: -len(suffix)]
@@ -58,7 +73,7 @@ def similarity_key(name: str) -> str:
 
 def _clean_str(max_len: int, *, min_len: int = 0) -> vol.All:
     """A stripped string with length limits."""
-    return vol.All(str, vol.Strip, vol.Length(min=min_len, max=max_len))
+    return vol.All(str, nfc, vol.Strip, vol.Length(min=min_len, max=max_len))
 
 
 def iso_date(value: Any) -> str:
@@ -225,9 +240,9 @@ class IngredientCollection(_MealPlannerCollection):
 
     def find_by_name(self, name: str) -> dict[str, Any] | None:
         """Return the catalog entry whose name matches ``name`` (case-insensitive)."""
-        wanted = name.strip().casefold()
+        wanted = nfc(name).strip().casefold()
         for item in self.data.values():
-            if item["name"].casefold() == wanted:
+            if nfc(item["name"]).casefold() == wanted:
                 return item
         return None
 
@@ -247,7 +262,7 @@ class IngredientCollection(_MealPlannerCollection):
                 for item in self.data.values()
                 if item["id"] != exclude_id and similarity_key(item["name"]) == wanted
             ),
-            key=lambda item: item["name"].casefold(),
+            key=lambda item: sort_key(item["name"]),
         )
 
     def _get_suggested_id(self, info: dict) -> str:

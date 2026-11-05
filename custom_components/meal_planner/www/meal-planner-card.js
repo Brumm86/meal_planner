@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  var CARD_VERSION = "0.2.0";
+  var CARD_VERSION = "0.2.1";
   var QUICK_TEXTS = ["Reste", "Auswärts", "Bestellen"];
 
   function esc(value) {
@@ -27,6 +27,14 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  // Search/compare key: case-, umlaut- and ß-insensitive ("kase" finds "Käse",
+  // "strasse" finds "Straße"). Only for matching - names are shown and stored as typed.
+  function fold(value) {
+    var t = String(value === null || value === undefined ? "" : value).toLowerCase().replace(/ß/g, "ss");
+    if (t.normalize) t = t.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return t;
   }
 
   function parseISO(iso) {
@@ -161,9 +169,15 @@
       this.shadowRoot.addEventListener("focusin", this._onFocusIn.bind(this));
       this.shadowRoot.addEventListener("focusout", this._onFocusOut.bind(this));
       // Keep the focus in the search field while an entry of its list is clicked.
+      var self = this;
+      this._pressTarget = null;
       this.shadowRoot.addEventListener("mousedown", function (ev) {
+        self._pressTarget = ev.target;
         if (ev.target.closest && ev.target.closest(".combo-list")) ev.preventDefault();
       });
+      this.shadowRoot.addEventListener("touchstart", function (ev) {
+        self._pressTarget = ev.target;
+      }, { passive: true });
     }
 
     static getStubConfig() {
@@ -272,7 +286,7 @@
       var list = this._snap.ingredients;
       for (var i = 0; i < list.length; i++) if (list[i].id === item.id) return;
       list.push(item);
-      list.sort(function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1; });
+      list.sort(function (a, b) { return fold(a.name) < fold(b.name) ? -1 : 1; });
     }
 
     _lastPlannedText(recipe) {
@@ -363,10 +377,10 @@
       var p = this._picker;
       var snap = this._snap;
       var recipes = snap.recipes.slice();
-      var q = (p.search || "").toLowerCase();
+      var q = fold(p.search || "");
       recipes = recipes.filter(function (r) {
         if (p.tag && r.tags.indexOf(p.tag) < 0) return false;
-        return !q || r.name.toLowerCase().indexOf(q) >= 0;
+        return !q || fold(r.name).indexOf(q) >= 0;
       });
       if (p.sort === "oldest") {
         recipes.sort(function (a, b) {
@@ -411,9 +425,9 @@
 
     _renderIngredients() {
       var self = this;
-      var q = this._ingSearch.toLowerCase();
+      var q = fold(this._ingSearch);
       var all = this._snap.ingredients;
-      var list = all.filter(function (i) { return !q || i.name.toLowerCase().indexOf(q) >= 0; });
+      var list = all.filter(function (i) { return !q || fold(i.name).indexOf(q) >= 0; });
       var html =
         '<div class="toolbar"><input id="mp-ing-search" placeholder="Zutat suchen…" value="' + esc(this._ingSearch) + '" style="flex:1" />' +
         '<button class="btn" data-action="ing-new">+ Neu</button></div>' +
@@ -449,9 +463,9 @@
             '<br><button class="btn small" data-action="ing-merge-do">Zusammenführen</button>' +
             '<button class="btn secondary small" data-action="ing-merge-reset">Andere wählen</button></div>';
         } else {
-          var q = (d.search || "").toLowerCase();
+          var q = fold(d.search || "");
           var others = this._snap.ingredients.filter(function (i) {
-            return i.id !== d.id && (!q || i.name.toLowerCase().indexOf(q) >= 0);
+            return i.id !== d.id && (!q || fold(i.name).indexOf(q) >= 0);
           });
           html += '<div class="toolbar"><input id="mp-merge-search" placeholder="Ziel-Zutat suchen…" value="' + esc(d.search || "") + '" style="flex:1" /></div><div class="rlist" style="max-height:40vh">';
           if (!others.length) html += '<div class="muted" style="padding:8px">Keine Treffer.</div>';
@@ -482,11 +496,11 @@
 
     _renderRecipes() {
       var snap = this._snap;
-      var q = this._search.toLowerCase();
+      var q = fold(this._search);
       var tag = this._tagFilter;
       var list = snap.recipes.filter(function (r) {
         if (tag && r.tags.indexOf(tag) < 0) return false;
-        return !q || r.name.toLowerCase().indexOf(q) >= 0;
+        return !q || fold(r.name).indexOf(q) >= 0;
       });
       var self = this;
       var left =
@@ -687,12 +701,12 @@
     // ------------------------------------------------- ingredient dropdown
 
     _comboOptions(query) {
-      var q = String(query || "").trim().toLowerCase();
+      var q = fold(String(query || "").trim());
       var all = this._snap.ingredients;
       var starts = [];
       var rest = [];
       all.forEach(function (i) {
-        var n = i.name.toLowerCase();
+        var n = fold(i.name);
         // Also match when the typed word is longer ("Zwiebeln" finds "Zwiebel").
         var hit = !q || n.indexOf(q) >= 0 || (n.length >= 3 && q.indexOf(n) >= 0);
         if (!hit) return;
@@ -702,7 +716,7 @@
         return '<button type="button" class="copt" data-action="combo-pick" data-ing="' + esc(i.id) + '">' + esc(i.name) +
           (i.default_unit ? ' <span class="sub">· ' + esc(i.default_unit) + "</span>" : "") + "</button>";
       }).join("");
-      var exact = all.some(function (i) { return i.name.toLowerCase() === q; });
+      var exact = all.some(function (i) { return fold(i.name) === q; });
       if (q && !exact) html += '<button type="button" class="copt new" data-action="combo-new">+ Neue Zutat „' + esc(String(query).trim()) + "“ anlegen</button>";
       if (!html) html = '<div class="combo-hint muted">Noch keine Zutaten – Namen tippen, um eine anzulegen.</div>';
       return html;
@@ -849,7 +863,15 @@
       if (!el) return;
       // Clicking the dark backdrop closes the picker; clicks inside the dialog must not.
       var act = el.getAttribute("data-action");
-      if ((act === "close-picker" || act === "close-ing") && el.classList.contains("overlay") && target !== el) return;
+      if ((act === "close-picker" || act === "close-ing") && el.classList.contains("overlay")) {
+        // Close only for a real click on the dark backdrop: press AND release on it.
+        // Picking an option in a native <select> list (e.g. "Stück") that reaches
+        // beyond the dialog can end with a "click" on the backdrop although the
+        // press happened elsewhere - that must not close the dialog.
+        var pressed = this._pressTarget;
+        this._pressTarget = null;
+        if (target !== el || pressed !== el) return;
+      }
       var action = el.getAttribute("data-action");
       var self = this;
       var date = el.getAttribute("data-date");
@@ -1026,7 +1048,7 @@
           this._syncDraft();
           var tags = String(this._editor.draft.tags || "").split(",").map(function (t) { return t.trim(); }).filter(function (t) { return t; });
           var tag = el.getAttribute("data-tag");
-          if (tags.map(function (t) { return t.toLowerCase(); }).indexOf(tag.toLowerCase()) < 0) tags.push(tag);
+          if (tags.map(function (t) { return fold(t); }).indexOf(fold(tag)) < 0) tags.push(tag);
           this._editor.draft.tags = tags.join(", ");
           this._render();
           break;

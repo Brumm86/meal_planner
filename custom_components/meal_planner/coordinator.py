@@ -31,7 +31,13 @@ from .const import (
     PLAN_KIND_TEXT,
     UNITS,
 )
-from .storage import IngredientCollection, PlanCollection, RecipeCollection, iso_date
+from .storage import (
+    IngredientCollection,
+    PlanCollection,
+    RecipeCollection,
+    iso_date,
+    sort_key,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -130,16 +136,16 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def build_snapshot(self) -> dict[str, Any]:
         """Everything the card needs, JSON-serialisable."""
-        recipes = sorted(self.recipes.data.values(), key=lambda r: r["name"].casefold())
+        recipes = sorted(self.recipes.data.values(), key=lambda r: sort_key(r["name"]))
         used_in: dict[str, int] = {}
         for recipe in recipes:
             for ingredient_id in {line["ingredient_id"] for line in recipe.get("ingredients", [])}:
                 used_in[ingredient_id] = used_in.get(ingredient_id, 0) + 1
         ingredients = [
             {**item, "recipe_count": used_in.get(item["id"], 0)}
-            for item in sorted(self.ingredients.data.values(), key=lambda i: i["name"].casefold())
+            for item in sorted(self.ingredients.data.values(), key=lambda i: sort_key(i["name"]))
         ]
-        tags = sorted({t for r in recipes for t in r.get("tags", [])}, key=str.casefold)
+        tags = sorted({t for r in recipes for t in r.get("tags", [])}, key=sort_key)
         plan = {
             entry["date"]: {
                 "date": entry["date"],
