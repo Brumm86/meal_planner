@@ -22,14 +22,24 @@ async def test_subscribe_pushes_snapshot_on_every_change(hass, hass_ws_client, i
     assert snapshot["recipes"] == [] and snapshot["plan"] == {}
     assert "g" in snapshot["units"] and "Stück" in snapshot["units"]
 
+    # Ingredients are created in the catalog first ...
+    await client.send_json(
+        {"id": 2, "type": "meal_planner/ingredient/save", "ingredient": {"name": "Mehl"}}
+    )
+    msgs = [await client.receive_json(), await client.receive_json()]
+    result = next(m for m in msgs if m["type"] == "result")
+    assert result["success"] and result["result"]["id"] == "mehl"
+    assert result["result"]["ingredient"]["name"] == "Mehl"
+
+    # ... and recipes only reference them by id.
     await client.send_json(
         {
-            "id": 2,
+            "id": 3,
             "type": "meal_planner/recipe/save",
             "recipe": {
                 "name": "Pfannkuchen",
                 "base_portions": 4,
-                "ingredients": [{"name": "Mehl", "amount": 250, "unit": "g"}],
+                "ingredients": [{"ingredient_id": "mehl", "amount": 250, "unit": "g"}],
             },
         }
     )
@@ -40,6 +50,63 @@ async def test_subscribe_pushes_snapshot_on_every_change(hass, hass_ws_client, i
     assert result["success"] and result["result"]["id"] == "pfannkuchen"
     assert [r["name"] for r in event["event"]["recipes"]] == ["Pfannkuchen"]
     assert [i["name"] for i in event["event"]["ingredients"]] == ["Mehl"]
+    assert event["event"]["ingredients"][0]["recipe_count"] == 1
+
+    # A free-text ingredient is refused (no silent catalog entry).
+    await client.send_json(
+        {
+            "id": 4,
+            "type": "meal_planner/recipe/save",
+            "recipe": {
+                "name": "Brot",
+                "base_portions": 2,
+                "ingredients": [{"name": "Hefe", "amount": 1, "unit": "Packung"}],
+            },
+        }
+    )
+    response = await client.receive_json()
+    assert not response["success"] and response["error"]["code"] == "invalid_format"
+
+
+async def test_ingredient_similar_and_merge(hass, hass_ws_client, init_integration) -> None:
+    client = await hass_ws_client(hass)
+    coordinator = init_integration.runtime_data
+    onion = await coordinator.async_save_ingredient(None, {"name": "Zwiebel"})
+    onions = await coordinator.async_save_ingredient(None, {"name": "Zwiebeln"})
+
+    await client.send_json({"id": 1, "type": "meal_planner/ingredient/similar", "name": "zwiebeln"})
+    response = await client.receive_json()
+    assert response["success"]
+    assert response["result"]["exact"] == {"id": onions["id"], "name": "Zwiebeln"}
+    assert response["result"]["similar"] == [{"id": onion["id"], "name": "Zwiebel"}]
+
+    await client.send_json(
+        {"id": 2, "type": "meal_planner/ingredient/save", "ingredient": {"name": "ZWIEBEL"}}
+    )
+    response = await client.receive_json()
+    assert not response["success"] and response["error"]["code"] == "ingredient_exists"
+
+    await client.send_json(
+        {
+            "id": 3,
+            "type": "meal_planner/ingredient/merge",
+            "source_id": onions["id"],
+            "target_id": onion["id"],
+        }
+    )
+    assert (await client.receive_json())["success"]
+    assert [i["name"] for i in coordinator.data["ingredients"]] == ["Zwiebel"]
+
+    await client.send_json(
+        {
+            "id": 4,
+            "type": "meal_planner/ingredient/merge",
+            "source_id": onion["id"],
+            "target_id": onion["id"],
+        }
+    )
+    response = await client.receive_json()
+    assert not response["success"] and response["error"]["code"] == "invalid_merge"
 
 
 async def test_plan_commands_and_errors(hass, hass_ws_client, init_integration) -> None:

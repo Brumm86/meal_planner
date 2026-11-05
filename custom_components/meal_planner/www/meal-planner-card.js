@@ -1,8 +1,10 @@
 /*
  * meal-planner-card - Lovelace card of the Meal Planner integration.
  *
- * One card with tabs: "Plan" (rolling lunch plan) and "Rezepte" (recipes with
- * structured ingredients). Further tabs (Einkauf) follow in later stages.
+ * One card with tabs: "Plan" (rolling lunch plan), "Rezepte" (recipes) and
+ * "Zutaten" (the ingredient catalog). Recipes only reference catalog
+ * ingredients (searchable dropdown), so one product exists exactly once.
+ * Further tabs (Einkauf) follow in later stages.
  *
  * Deliberately a plain script: NO import/export statements and no syntax newer
  * than what older WebViews accept (no optional chaining, class fields, ...).
@@ -16,7 +18,7 @@
 (function () {
   "use strict";
 
-  var CARD_VERSION = "0.1.2";
+  var CARD_VERSION = "0.2.0";
   var QUICK_TEXTS = ["Reste", "Auswärts", "Bestellen"];
 
   function esc(value) {
@@ -107,8 +109,21 @@
     ":host(.narrow) .day{grid-template-columns:1fr auto}" +
     ":host(.narrow) .day .date{grid-column:1/-1}" +
     ".ing{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:6px;margin-bottom:10px}" +
-    ".ing [data-l=name]{grid-column:1/-1}" +
+    ".ing .combo{grid-column:1/-1;position:relative}" +
     ".ing input,.ing select{width:100%;min-width:0}" +
+    ".combo-list{position:absolute;left:0;right:0;top:100%;z-index:20;margin-top:2px;max-height:240px;overflow:auto;background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25)}" +
+    ".combo-list[hidden]{display:none}" +
+    ".copt{display:block;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid var(--divider-color);padding:9px 10px;color:var(--primary-text-color)}" +
+    ".copt:hover{background:var(--secondary-background-color)}" +
+    ".copt.new{color:var(--primary-color);font-weight:500}" +
+    ".copt .sub{font-size:.85em;color:var(--secondary-text-color)}" +
+    ".combo-hint{padding:10px;font-size:.95em}" +
+    ".combo-hint .btn{margin:6px 6px 0 0}" +
+    ".hint{background:var(--secondary-background-color);border-radius:8px;padding:10px;margin:8px 0}" +
+    ".hint .btn{margin:6px 6px 0 0}" +
+    ".irow{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--divider-color);padding:6px}" +
+    ".irow .info{flex:1;min-width:0}" +
+    ".irow .info .sub{font-size:.85em;color:var(--secondary-text-color)}" +
     ".split>*{min-width:0}" +
     ".row{display:flex;gap:12px;flex-wrap:wrap}" +
     ".row>label.field{flex:1;min-width:120px}" +
@@ -132,6 +147,10 @@
       this._search = "";
       this._tagFilter = "";
       this._confirmDelete = false;
+      this._ingSearch = "";
+      this._ingDialog = null; // {mode: new|edit|merge, id, name, unit, similar, force, search, target}
+      this._confirmIngDelete = null;
+      this._comboBlurTimer = null;
       this._unsub = null;
       this._subscribing = false;
       this._hass = null;
@@ -139,6 +158,12 @@
       this.shadowRoot.addEventListener("click", this._onClick.bind(this));
       this.shadowRoot.addEventListener("input", this._onInput.bind(this));
       this.shadowRoot.addEventListener("change", this._onChange.bind(this));
+      this.shadowRoot.addEventListener("focusin", this._onFocusIn.bind(this));
+      this.shadowRoot.addEventListener("focusout", this._onFocusOut.bind(this));
+      // Keep the focus in the search field while an entry of its list is clicked.
+      this.shadowRoot.addEventListener("mousedown", function (ev) {
+        if (ev.target.closest && ev.target.closest(".combo-list")) ev.preventDefault();
+      });
     }
 
     static getStubConfig() {
@@ -199,7 +224,7 @@
         .subscribeMessage(function (snapshot) {
           self._snap = snapshot;
           self._error = self._error === "not_loaded" ? "" : self._error;
-          if (!self._editor && !self._picker) self._render();
+          if (!self._editor && !self._picker && !self._ingDialog) self._render();
         }, { type: "meal_planner/subscribe" })
         .then(function (unsub) {
           self._unsub = unsub;
@@ -241,11 +266,13 @@
       return null;
     }
 
-    _ingredientByName(name) {
-      var wanted = String(name || "").trim().toLowerCase();
-      var list = (this._snap && this._snap.ingredients) || [];
-      for (var i = 0; i < list.length; i++) if (list[i].name.toLowerCase() === wanted) return list[i];
-      return null;
+    // A freshly created ingredient is usable at once, even if the pushed
+    // snapshot (which contains it) has not been rendered yet.
+    _ensureIngredient(item) {
+      var list = this._snap.ingredients;
+      for (var i = 0; i < list.length; i++) if (list[i].id === item.id) return;
+      list.push(item);
+      list.sort(function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1; });
     }
 
     _lastPlannedText(recipe) {
@@ -267,16 +294,18 @@
         body = '<div class="muted">Lade…</div>';
       } else {
         body =
-          (this._error && !this._editor ? this._errorBanner() : "") +
+          (this._error && !this._editor && !this._ingDialog ? this._errorBanner() : "") +
           '<div class="tabs">' +
           this._tabButton("plan", "Plan") +
           this._tabButton("recipes", "Rezepte") +
+          this._tabButton("ingredients", "Zutaten") +
           "</div>" +
-          (this._tab === "plan" ? this._renderPlan() : this._renderRecipes()) +
-          (this._picker ? this._renderPicker() : "");
+          (this._tab === "plan" ? this._renderPlan() : this._tab === "recipes" ? this._renderRecipes() : this._renderIngredients()) +
+          (this._picker ? this._renderPicker() : "") +
+          (this._ingDialog ? this._renderIngDialog() : "");
       }
       var title = this._config.title ? "<h2 style=\"margin:0 0 8px\">" + esc(this._config.title) + "</h2>" : "";
-      root.innerHTML = "<style>" + STYLE + "</style><ha-card>" + title + body + "</ha-card>" + this._datalists();
+      root.innerHTML = "<style>" + STYLE + "</style><ha-card>" + title + body + "</ha-card>";
       var banner = root.getElementById("mp-error");
       if (banner && banner.scrollIntoView) banner.scrollIntoView({ block: "nearest" });
     }
@@ -287,12 +316,6 @@
 
     _tabButton(id, label) {
       return '<button class="tab' + (this._tab === id ? " active" : "") + '" data-action="tab" data-tab="' + id + '">' + label + "</button>";
-    }
-
-    _datalists() {
-      if (!this._snap) return "";
-      var ing = this._snap.ingredients.map(function (i) { return '<option value="' + esc(i.name) + '"></option>'; }).join("");
-      return '<datalist id="mp-ingredients">' + ing + "</datalist>";
     }
 
     // ------------------------------------------------------------------ plan
@@ -376,6 +399,85 @@
       return html;
     }
 
+    // ----------------------------------------------------------- ingredients
+
+    _unitHint(ing) {
+      var used = ing.recipe_count || 0;
+      return (
+        (ing.default_unit ? "Standardeinheit: " + esc(ing.default_unit) : "keine Standardeinheit") +
+        " · " + (used ? "in " + used + (used === 1 ? " Rezept" : " Rezepten") : "nicht verwendet")
+      );
+    }
+
+    _renderIngredients() {
+      var self = this;
+      var q = this._ingSearch.toLowerCase();
+      var all = this._snap.ingredients;
+      var list = all.filter(function (i) { return !q || i.name.toLowerCase().indexOf(q) >= 0; });
+      var html =
+        '<div class="toolbar"><input id="mp-ing-search" placeholder="Zutat suchen…" value="' + esc(this._ingSearch) + '" style="flex:1" />' +
+        '<button class="btn" data-action="ing-new">+ Neu</button></div>' +
+        '<div class="muted" style="margin-bottom:6px">' + all.length + " Zutaten im Katalog</div>";
+      if (!list.length) html += '<div class="muted" style="padding:8px">' + (all.length ? "Keine Treffer." : "Noch keine Zutaten. Mit „+ Neu“ geht es los.") + "</div>";
+      list.forEach(function (i) {
+        var remove;
+        if (i.recipe_count) remove = '<button class="iconbtn" disabled title="Wird noch in Rezepten verwendet" style="opacity:.3;cursor:default">🗑</button>';
+        else if (self._confirmIngDelete === i.id) remove = '<button class="btn danger small" data-action="ing-delete" data-ing="' + esc(i.id) + '">Wirklich löschen?</button>';
+        else remove = '<button class="iconbtn" title="Löschen" data-action="ing-ask-delete" data-ing="' + esc(i.id) + '">🗑</button>';
+        html +=
+          '<div class="irow"><div class="info"><div>' + esc(i.name) + '</div><div class="sub">' + self._unitHint(i) + "</div></div>" +
+          '<button class="iconbtn" title="Umbenennen / Einheit ändern" data-action="ing-edit" data-ing="' + esc(i.id) + '">✎</button>' +
+          '<button class="iconbtn" title="In andere Zutat zusammenführen" data-action="ing-merge" data-ing="' + esc(i.id) + '">⇄</button>' +
+          remove + "</div>";
+      });
+      return html;
+    }
+
+    _renderIngDialog() {
+      var d = this._ingDialog;
+      var html = '<div class="overlay" data-action="close-ing"><div class="dialog" data-stop="1">';
+      if (d.mode === "merge") {
+        var src = this._ingredient(d.id);
+        var tgt = d.target ? this._ingredient(d.target) : null;
+        html += "<h3>„" + esc(src ? src.name : "?") + "“ zusammenführen</h3>";
+        html += '<div class="muted" style="margin-bottom:8px">Alle Rezepte mit dieser Zutat verwenden danach die gewählte Zutat; „' + esc(src ? src.name : "?") + "“ wird gelöscht.</div>";
+        if (tgt) {
+          var n = src ? src.recipe_count : 0;
+          html +=
+            '<div class="hint">„' + esc(src.name) + "“ → „" + esc(tgt.name) + "“<br>" +
+            (n ? n + (n === 1 ? " Rezept wird" : " Rezepte werden") + " angepasst." : "Kein Rezept betroffen.") +
+            '<br><button class="btn small" data-action="ing-merge-do">Zusammenführen</button>' +
+            '<button class="btn secondary small" data-action="ing-merge-reset">Andere wählen</button></div>';
+        } else {
+          var q = (d.search || "").toLowerCase();
+          var others = this._snap.ingredients.filter(function (i) {
+            return i.id !== d.id && (!q || i.name.toLowerCase().indexOf(q) >= 0);
+          });
+          html += '<div class="toolbar"><input id="mp-merge-search" placeholder="Ziel-Zutat suchen…" value="' + esc(d.search || "") + '" style="flex:1" /></div><div class="rlist" style="max-height:40vh">';
+          if (!others.length) html += '<div class="muted" style="padding:8px">Keine Treffer.</div>';
+          others.forEach(function (i) {
+            html += '<button class="ritem" data-action="ing-merge-pick" data-ing="' + esc(i.id) + '"><div>' + esc(i.name) + '</div><div class="sub">' + esc(i.default_unit || "keine Standardeinheit") + "</div></button>";
+          });
+          html += "</div>";
+        }
+      } else {
+        html += "<h3>" + (d.mode === "new" ? "Neue Zutat" : "Zutat bearbeiten") + "</h3>";
+        html += '<label class="field"><span>Name</span><input id="mp-ing-name" style="width:100%" value="' + esc(d.name) + '" /></label>';
+        html += '<label class="field"><span>Standardeinheit</span><select id="mp-ing-unit">' + this._unitOptions(d.unit || "", true) + "</select></label>";
+        if (d.similar && d.similar.length) {
+          html +=
+            '<div class="hint">Ähnlich vorhanden: <b>' + d.similar.map(function (s) { return esc(s.name); }).join(", ") + "</b>.<br>" +
+            "Nur speichern, wenn es wirklich eine andere Zutat ist." +
+            '<br><button class="btn small" data-action="ing-save-force">Trotzdem speichern</button></div>';
+        }
+      }
+      if (this._error) html += this._errorBanner();
+      html += '<div style="text-align:right;margin-top:10px">';
+      if (d.mode !== "merge") html += '<button class="btn" data-action="ing-save">Speichern</button> ';
+      html += '<button class="btn secondary" data-action="close-ing">Abbrechen</button></div></div></div>';
+      return html;
+    }
+
     // --------------------------------------------------------------- recipes
 
     _renderRecipes() {
@@ -427,7 +529,11 @@
     }
 
     _newDraft() {
-      return { name: "", base_portions: this._snap.settings.household_size, duration_min: "", tags: "", notes: "", instructions: "", last_planned: "", ingredients: [{ name: "", amount: "", unit: "g" }] };
+      return { name: "", base_portions: this._snap.settings.household_size, duration_min: "", tags: "", notes: "", instructions: "", last_planned: "", ingredients: [this._emptyLine()] };
+    }
+
+    _emptyLine() {
+      return { ingredient_id: "", name: "", amount: "", unit: "g", touched: false };
     }
 
     _draftFrom(r) {
@@ -442,7 +548,7 @@
         last_planned: r.last_planned || "",
         ingredients: r.ingredients.map(function (l) {
           var ing = self._ingredient(l.ingredient_id);
-          return { name: ing ? ing.name : "", amount: formatAmount(l.amount), unit: l.unit || "" };
+          return { ingredient_id: l.ingredient_id, name: ing ? ing.name : "", amount: formatAmount(l.amount), unit: l.unit || "", touched: true };
         }),
       };
     }
@@ -465,9 +571,10 @@
       if (this._snap.tags.length) html += "<div style=\"margin:-4px 0 10px\">" + this._snap.tags.map(function (t) { return '<button class="chip" data-action="add-tag" data-tag="' + esc(t) + '">+ ' + esc(t) + "</button>"; }).join("") + "</div>";
       html += "<h4 style=\"margin:8px 0 6px\">Zutaten <span class=\"muted\" style=\"font-weight:400\">(für " + esc(d.base_portions || "?") + " Portionen)</span></h4>";
       d.ingredients.forEach(function (line, i) {
+        var chosen = line.ingredient_id ? self._ingredient(line.ingredient_id) : null;
         html +=
-          '<div class="ing" data-line="' + i + '">' +
-          '<input data-l="name" list="mp-ingredients" placeholder="Zutat" value="' + esc(line.name) + '" />' +
+          '<div class="ing" data-line="' + i + '" data-ing="' + esc(chosen ? chosen.id : "") + '"' + (line.touched ? ' data-unit-touched="1"' : "") + ">" +
+          '<div class="combo"><input data-l="search" autocomplete="off" placeholder="Zutat suchen oder neu anlegen…" value="' + esc(chosen ? chosen.name : line.name) + '" /><div class="combo-list" hidden></div></div>' +
           '<input data-l="amount" inputmode="decimal" placeholder="Menge" value="' + esc(line.amount) + '" />' +
           '<select data-l="unit">' + self._unitOptions(line.unit, true) + "</select>" +
           '<button class="iconbtn" title="Entfernen" data-action="remove-line" data-line="' + i + '">✕</button></div>';
@@ -496,9 +603,11 @@
       var lines = [];
       for (var j = 0; j < rows.length; j++) {
         lines.push({
-          name: rows[j].querySelector('[data-l="name"]').value,
+          ingredient_id: rows[j].getAttribute("data-ing") || "",
+          name: rows[j].querySelector('[data-l="search"]').value,
           amount: rows[j].querySelector('[data-l="amount"]').value,
           unit: rows[j].querySelector('[data-l="unit"]').value,
+          touched: rows[j].hasAttribute("data-unit-touched"),
         });
       }
       d.ingredients = lines;
@@ -515,16 +624,24 @@
       var lines = [];
       for (var i = 0; i < d.ingredients.length; i++) {
         var l = d.ingredients[i];
-        var lname = String(l.name || "").trim();
+        var typed = String(l.name || "").trim();
         var amount = parseAmount(l.amount);
         var unit = l.unit || null;
-        if (!lname && amount === null && !unit) continue; // empty row
-        if (!lname) throw new Error("Zutat " + (i + 1) + ": Name fehlt.");
+        if (!typed && !l.ingredient_id && amount === null) continue; // empty row
+        var chosen = l.ingredient_id ? this._ingredient(l.ingredient_id) : null;
+        if (!chosen) {
+          throw new Error(
+            typed
+              ? "Zutat „" + typed + "“: bitte aus der Liste wählen oder über „+ Neue Zutat anlegen“ neu anlegen."
+              : "Zutat " + (i + 1) + ": bitte eine Zutat auswählen."
+          );
+        }
+        var lname = chosen.name;
         if (isNaN(amount)) throw new Error("Zutat „" + lname + "“: Menge ist keine Zahl.");
         if (amount !== null && amount <= 0) throw new Error("Zutat „" + lname + "“: Menge muss größer als 0 sein.");
         if (amount !== null && !unit) throw new Error("Zutat „" + lname + "“: Einheit fehlt.");
         if (amount === null && unit) throw new Error("Zutat „" + lname + "“: Menge fehlt.");
-        lines.push({ name: lname, amount: amount, unit: unit });
+        lines.push({ ingredient_id: chosen.id, amount: amount, unit: unit });
       }
       var payload = {
         name: name,
@@ -553,7 +670,153 @@
       } else if (t.id === "mp-picker-search") {
         this._picker.search = t.value;
         this._rerenderKeepingFocus("mp-picker-search");
+      } else if (t.id === "mp-ing-search") {
+        this._ingSearch = t.value;
+        this._rerenderKeepingFocus("mp-ing-search");
+      } else if (t.id === "mp-merge-search") {
+        this._ingDialog.search = t.value;
+        this._rerenderKeepingFocus("mp-merge-search");
+      } else if (t.getAttribute && t.getAttribute("data-l") === "search") {
+        // Typing changes the text, so the earlier choice no longer applies.
+        var row = t.closest(".ing");
+        if (row) row.setAttribute("data-ing", "");
+        this._showCombo(t, t.value);
       }
+    }
+
+    // ------------------------------------------------- ingredient dropdown
+
+    _comboOptions(query) {
+      var q = String(query || "").trim().toLowerCase();
+      var all = this._snap.ingredients;
+      var starts = [];
+      var rest = [];
+      all.forEach(function (i) {
+        var n = i.name.toLowerCase();
+        // Also match when the typed word is longer ("Zwiebeln" finds "Zwiebel").
+        var hit = !q || n.indexOf(q) >= 0 || (n.length >= 3 && q.indexOf(n) >= 0);
+        if (!hit) return;
+        (q && n.indexOf(q) === 0 ? starts : rest).push(i);
+      });
+      var html = starts.concat(rest).map(function (i) {
+        return '<button type="button" class="copt" data-action="combo-pick" data-ing="' + esc(i.id) + '">' + esc(i.name) +
+          (i.default_unit ? ' <span class="sub">· ' + esc(i.default_unit) + "</span>" : "") + "</button>";
+      }).join("");
+      var exact = all.some(function (i) { return i.name.toLowerCase() === q; });
+      if (q && !exact) html += '<button type="button" class="copt new" data-action="combo-new">+ Neue Zutat „' + esc(String(query).trim()) + "“ anlegen</button>";
+      if (!html) html = '<div class="combo-hint muted">Noch keine Zutaten – Namen tippen, um eine anzulegen.</div>';
+      return html;
+    }
+
+    _comboHint(name, similar) {
+      return (
+        '<div class="combo-hint">Ähnlich vorhanden – meinst du eine davon?<br>' +
+        similar.map(function (s) { return '<button type="button" class="btn small" data-action="combo-pick" data-ing="' + esc(s.id) + '">„' + esc(s.name) + "“ verwenden</button>"; }).join("") +
+        '<br><button type="button" class="btn secondary small" data-action="combo-create" data-name="' + esc(name) + '">Trotzdem „' + esc(name) + "“ neu anlegen</button></div>"
+      );
+    }
+
+    _showCombo(input, query) {
+      var list = input.parentNode.querySelector(".combo-list");
+      if (!list) return;
+      list.innerHTML = this._comboOptions(query);
+      list.hidden = false;
+    }
+
+    _rowFor(line) {
+      return this.shadowRoot.querySelector('.ing[data-line="' + line + '"]');
+    }
+
+    _selectIngredient(row, id) {
+      var ing = this._ingredient(id);
+      if (!row || !ing) return;
+      row.setAttribute("data-ing", ing.id);
+      row.querySelector('[data-l="search"]').value = ing.name;
+      // Pre-fill the usual unit unless the unit was chosen by hand.
+      var unitSel = row.querySelector('[data-l="unit"]');
+      if (ing.default_unit && unitSel && !row.hasAttribute("data-unit-touched")) unitSel.value = ing.default_unit;
+      var list = row.querySelector(".combo-list");
+      if (list) list.hidden = true;
+    }
+
+    _createIngredientFor(line, name) {
+      var self = this;
+      this._call({ type: "meal_planner/ingredient/save", ingredient: { name: name } })
+        .then(function (res) {
+          self._ensureIngredient(res.ingredient);
+          self._selectIngredient(self._rowFor(line), res.id);
+        })
+        .catch(function () {});
+    }
+
+    _onFocusIn(ev) {
+      var t = ev.target;
+      if (!t.getAttribute || t.getAttribute("data-l") !== "search") return;
+      clearTimeout(this._comboBlurTimer);
+      if (t.select) t.select();
+      // Show the whole catalog first; the list narrows once the user types.
+      this._showCombo(t, "");
+    }
+
+    _onFocusOut(ev) {
+      var t = ev.target;
+      if (!t.getAttribute || t.getAttribute("data-l") !== "search") return;
+      this._comboBlurTimer = setTimeout(function () {
+        if (!t.isConnected) return;
+        var list = t.parentNode.querySelector(".combo-list");
+        if (list) list.hidden = true;
+      }, 200);
+    }
+
+    // ------------------------------------------------- ingredient catalog tab
+
+    _syncIngDialog() {
+      var d = this._ingDialog;
+      if (!d) return;
+      var n = this.shadowRoot.getElementById("mp-ing-name");
+      if (n) d.name = n.value;
+      var u = this.shadowRoot.getElementById("mp-ing-unit");
+      if (u) d.unit = u.value;
+    }
+
+    _saveIngredient(force) {
+      var self = this;
+      this._syncIngDialog();
+      var d = this._ingDialog;
+      var name = String(d.name || "").trim();
+      if (!name) {
+        this._error = "Bitte einen Namen eingeben.";
+        this._render();
+        return;
+      }
+      var proceed = function () {
+        var msg = { type: "meal_planner/ingredient/save", ingredient: { name: name, default_unit: d.unit || null } };
+        if (d.mode === "edit") msg.ingredient_id = d.id;
+        self._call(msg).then(function () {
+          self._ingDialog = null;
+          self._render();
+        }).catch(function () {});
+      };
+      // Only the name matters for duplicates; changing just the unit is fine.
+      if (force || (d.mode === "edit" && name === d.origName)) {
+        proceed();
+        return;
+      }
+      var check = { type: "meal_planner/ingredient/similar", name: name };
+      if (d.mode === "edit") check.exclude_id = d.id;
+      this._call(check).then(function (res) {
+        if (res.exact) {
+          d.similar = null;
+          self._error = "„" + res.exact.name + "“ gibt es bereits.";
+          self._render();
+        } else if (res.similar.length) {
+          d.similar = res.similar;
+          self._error = "";
+          self._render();
+        } else {
+          proceed();
+        }
+      }).catch(function () {});
     }
 
     _rerenderKeepingFocus(id) {
@@ -577,12 +840,6 @@
       var kind = t.getAttribute ? t.getAttribute("data-l") : null;
       var row = kind && t.closest ? t.closest(".ing") : null;
       if (kind === "unit" && row) row.setAttribute("data-unit-touched", "1");
-      // Picking a known ingredient pre-fills its usual unit (unless the unit was chosen by hand).
-      if (kind === "name" && row && !row.getAttribute("data-unit-touched")) {
-        var known = this._ingredientByName(t.value);
-        var unitSel = row.querySelector('[data-l="unit"]');
-        if (known && known.default_unit && unitSel) unitSel.value = known.default_unit;
-      }
     }
 
     _onClick(ev) {
@@ -591,7 +848,8 @@
       var el = target.closest ? target.closest("[data-action]") : null;
       if (!el) return;
       // Clicking the dark backdrop closes the picker; clicks inside the dialog must not.
-      if (el.getAttribute("data-action") === "close-picker" && el.classList.contains("overlay") && target !== el) return;
+      var act = el.getAttribute("data-action");
+      if ((act === "close-picker" || act === "close-ing") && el.classList.contains("overlay") && target !== el) return;
       var action = el.getAttribute("data-action");
       var self = this;
       var date = el.getAttribute("data-date");
@@ -668,14 +926,101 @@
           break;
         case "add-line":
           this._syncDraft();
-          this._editor.draft.ingredients.push({ name: "", amount: "", unit: "g" });
+          this._editor.draft.ingredients.push(this._emptyLine());
           this._render();
           break;
         case "remove-line":
           this._syncDraft();
           this._editor.draft.ingredients.splice(Number(el.getAttribute("data-line")), 1);
-          if (!this._editor.draft.ingredients.length) this._editor.draft.ingredients.push({ name: "", amount: "", unit: "g" });
+          if (!this._editor.draft.ingredients.length) this._editor.draft.ingredients.push(this._emptyLine());
           this._render();
+          break;
+        case "combo-pick":
+          this._selectIngredient(el.closest(".ing"), el.getAttribute("data-ing"));
+          break;
+        case "combo-new": {
+          var nrow = el.closest(".ing");
+          var nname = nrow.querySelector('[data-l="search"]').value.trim();
+          if (!nname) break;
+          var nline = nrow.getAttribute("data-line");
+          this._syncDraft();
+          this._call({ type: "meal_planner/ingredient/similar", name: nname }).then(function (res) {
+            var r = self._rowFor(nline);
+            if (!r) return;
+            if (res.exact) {
+              self._selectIngredient(r, res.exact.id);
+            } else if (res.similar.length) {
+              var lst = r.querySelector(".combo-list");
+              lst.innerHTML = self._comboHint(nname, res.similar);
+              lst.hidden = false;
+            } else {
+              self._createIngredientFor(nline, nname);
+            }
+          }).catch(function () {});
+          break;
+        }
+        case "combo-create": {
+          var crow = el.closest(".ing");
+          this._syncDraft();
+          this._createIngredientFor(crow.getAttribute("data-line"), el.getAttribute("data-name"));
+          break;
+        }
+        case "ing-new":
+          this._error = "";
+          this._ingDialog = { mode: "new", id: null, name: "", origName: "", unit: "", similar: null };
+          this._render();
+          break;
+        case "ing-edit": {
+          var eing = this._ingredient(el.getAttribute("data-ing"));
+          if (!eing) break;
+          this._error = "";
+          this._ingDialog = { mode: "edit", id: eing.id, name: eing.name, origName: eing.name, unit: eing.default_unit || "", similar: null };
+          this._render();
+          break;
+        }
+        case "ing-save":
+          this._saveIngredient(false);
+          break;
+        case "ing-save-force":
+          this._saveIngredient(true);
+          break;
+        case "close-ing":
+          this._ingDialog = null;
+          this._error = "";
+          this._render();
+          break;
+        case "ing-merge":
+          this._error = "";
+          this._ingDialog = { mode: "merge", id: el.getAttribute("data-ing"), search: "", target: null };
+          this._render();
+          break;
+        case "ing-merge-pick":
+          this._ingDialog.target = el.getAttribute("data-ing");
+          this._render();
+          break;
+        case "ing-merge-reset":
+          this._ingDialog.target = null;
+          this._render();
+          break;
+        case "ing-merge-do": {
+          var md = this._ingDialog;
+          this._call({ type: "meal_planner/ingredient/merge", source_id: md.id, target_id: md.target }).then(function () {
+            self._ingDialog = null;
+            self._render();
+          }).catch(function () {});
+          break;
+        }
+        case "ing-ask-delete":
+          this._confirmIngDelete = el.getAttribute("data-ing");
+          this._render();
+          break;
+        case "ing-delete":
+          this._call({ type: "meal_planner/ingredient/delete", ingredient_id: el.getAttribute("data-ing") }).then(function () {
+            self._confirmIngDelete = null;
+            self._render();
+          }).catch(function () {
+            self._confirmIngDelete = null;
+          });
           break;
         case "add-tag": {
           this._syncDraft();

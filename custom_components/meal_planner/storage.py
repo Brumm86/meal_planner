@@ -5,7 +5,8 @@ writes) and change notification follow the same pattern core helpers use.
 Each collection owns one ``Store`` file:
 
 * ``meal_planner.recipes``     - recipes (id = generated slug of the name)
-* ``meal_planner.ingredients`` - ingredient catalog (autocomplete + dedupe)
+* ``meal_planner.ingredients`` - ingredient catalog (the only place ingredient
+  names live; recipes reference it by id, so one product = one entry)
 * ``meal_planner.plan``        - one entry per day (id = ISO date)
 
 Only schema validation and uniqueness rules live here; the cross-collection
@@ -34,6 +35,25 @@ from .const import (
     STORAGE_VERSION,
     UNITS,
 )
+
+
+_UMLAUTS = str.maketrans({"ä": "a", "ö": "o", "ü": "u", "ß": "ss"})
+# Longest first: "Tomaten" -> "tomat", "Eier" -> "ei", "Zwiebeln" -> "zwiebel".
+_PLURAL_SUFFIXES = ("en", "er", "n", "e", "s")
+
+
+def similarity_key(name: str) -> str:
+    """Spelling-insensitive key used to spot near-duplicate ingredient names.
+
+    Case, umlauts, punctuation/spaces and one common German plural ending are
+    ignored, so "Zwiebel" / "Zwiebeln" and "Tomate" / "Tomaten" share a key.
+    It is only a heuristic for *warning* the user - never for blocking.
+    """
+    key = "".join(ch for ch in name.casefold().translate(_UMLAUTS) if ch.isalnum())
+    for suffix in _PLURAL_SUFFIXES:
+        if key.endswith(suffix) and len(key) - len(suffix) >= 2:
+            return key[: -len(suffix)]
+    return key
 
 
 def _clean_str(max_len: int, *, min_len: int = 0) -> vol.All:
@@ -210,6 +230,25 @@ class IngredientCollection(_MealPlannerCollection):
             if item["name"].casefold() == wanted:
                 return item
         return None
+
+    def find_similar(self, name: str, exclude_id: str | None = None) -> list[dict[str, Any]]:
+        """Catalog entries that look like ``name`` (see ``similarity_key``).
+
+        Exact (case-insensitive) matches are returned too; callers that treat
+        those separately filter them out. ``exclude_id`` skips the entry being
+        renamed.
+        """
+        wanted = similarity_key(name)
+        if not wanted:
+            return []
+        return sorted(
+            (
+                item
+                for item in self.data.values()
+                if item["id"] != exclude_id and similarity_key(item["name"]) == wanted
+            ),
+            key=lambda item: item["name"].casefold(),
+        )
 
     def _get_suggested_id(self, info: dict) -> str:
         return slugify(info["name"]) or "zutat"

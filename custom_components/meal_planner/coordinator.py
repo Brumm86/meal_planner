@@ -49,6 +49,32 @@ class MealPlannerError(Exception):
         self.message = message
 
 
+def _merge_lines(
+    lines: list[dict[str, Any]], source_id: str, target_id: str
+) -> list[dict[str, Any]]:
+    """Point ``source_id`` lines at ``target_id`` and combine same-unit duplicates."""
+    result: list[dict[str, Any]] = []
+    for original in lines:
+        line = dict(original)
+        if line["ingredient_id"] == source_id:
+            line["ingredient_id"] = target_id
+        if line["ingredient_id"] == target_id:
+            for existing in result:
+                if (
+                    existing["ingredient_id"] == target_id
+                    and existing["unit"] == line["unit"]
+                    and (existing["amount"] is None) == (line["amount"] is None)
+                ):
+                    if line["amount"] is not None:
+                        existing["amount"] = round(existing["amount"] + line["amount"], 3)
+                    break
+            else:
+                result.append(line)
+        else:
+            result.append(line)
+    return result
+
+
 class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Holds all meal planner state and the operations on it."""
 
@@ -105,7 +131,14 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def build_snapshot(self) -> dict[str, Any]:
         """Everything the card needs, JSON-serialisable."""
         recipes = sorted(self.recipes.data.values(), key=lambda r: r["name"].casefold())
-        ingredients = sorted(self.ingredients.data.values(), key=lambda i: i["name"].casefold())
+        used_in: dict[str, int] = {}
+        for recipe in recipes:
+            for ingredient_id in {line["ingredient_id"] for line in recipe.get("ingredients", [])}:
+                used_in[ingredient_id] = used_in.get(ingredient_id, 0) + 1
+        ingredients = [
+            {**item, "recipe_count": used_in.get(item["id"], 0)}
+            for item in sorted(self.ingredients.data.values(), key=lambda i: i["name"].casefold())
+        ]
         tags = sorted({t for r in recipes for t in r.get("tags", [])}, key=str.casefold)
         plan = {
             entry["date"]: {
@@ -157,9 +190,10 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_save_recipe(self, recipe_id: str | None, data: dict[str, Any]) -> dict[str, Any]:
         """Create (``recipe_id`` None) or update a recipe.
 
-        Ingredient lines arrive as ``{"name", "amount", "unit"}``; names are
-        resolved against the catalog and unknown ones are created on the fly
-        (that is the autocomplete flow of the card).
+        Ingredient lines arrive as ``{"ingredient_id", "amount", "unit"}`` and
+        must reference an existing catalog entry. Free-text names are not
+        accepted on purpose: that is what keeps "Zwiebel" and "Zwiebeln" from
+        ending up as two shopping-list items.
         """
         payload = dict(data)
         if "ingredients" in payload:
@@ -176,16 +210,15 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _resolve_lines(self, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         resolved: list[dict[str, Any]] = []
         for raw in lines:
-            name = str(raw.get("name", "")).strip()
-            if not name:
-                raise vol.Invalid("ingredient name is required")
-            unit = raw.get("unit") or None
-            entry = self.ingredients.find_by_name(name)
+            ingredient_id = raw.get("ingredient_id")
+            if not ingredient_id:
+                raise vol.Invalid("ingredient_id is required")
+            entry = self.ingredients.data.get(ingredient_id)
             if entry is None:
-                entry = await self.ingredients.async_create_item(
-                    {"name": name, "default_unit": unit}
-                )
-            elif entry.get("default_unit") is None and unit:
+                raise MealPlannerError("not_found", "Zutat nicht gefunden")
+            unit = raw.get("unit") or None
+            # The first unit a recipe uses becomes the ingredient's usual unit.
+            if entry.get("default_unit") is None and unit:
                 entry = await self.ingredients.async_update_item(
                     entry["id"], {"default_unit": unit}
                 )
@@ -235,14 +268,69 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self, ingredient_id: str | None, data: dict[str, Any]
     ) -> dict[str, Any]:
         """Create or rename/update a catalog ingredient."""
-        if ingredient_id is None:
-            item = await self.ingredients.async_create_item(data)
-        else:
-            if ingredient_id not in self.ingredients.data:
-                raise MealPlannerError("not_found", "Zutat nicht gefunden")
-            item = await self.ingredients.async_update_item(ingredient_id, data)
+        try:
+            if ingredient_id is None:
+                item = await self.ingredients.async_create_item(data)
+            else:
+                if ingredient_id not in self.ingredients.data:
+                    raise MealPlannerError("not_found", "Zutat nicht gefunden")
+                item = await self.ingredients.async_update_item(ingredient_id, data)
+        except vol.Invalid as err:
+            if str(err) == "ingredient_exists":
+                raise MealPlannerError(
+                    "ingredient_exists", "Diese Zutat gibt es bereits."
+                ) from err
+            raise
         await self.async_refresh()
         return item
+
+    def find_similar_ingredients(
+        self, name: str, exclude_id: str | None = None
+    ) -> dict[str, Any]:
+        """Duplicate check the card runs before creating/renaming an ingredient.
+
+        ``exact`` is a catalog entry with the same name (ignoring case);
+        ``similar`` are other entries that differ only in spelling/plural.
+        """
+        exact = self.ingredients.find_by_name(name)
+        if exact is not None and exact["id"] == exclude_id:
+            exact = None
+        similar = [
+            item
+            for item in self.ingredients.find_similar(name, exclude_id)
+            if exact is None or item["id"] != exact["id"]
+        ]
+        brief = lambda item: {"id": item["id"], "name": item["name"]}  # noqa: E731
+        return {
+            "exact": brief(exact) if exact else None,
+            "similar": [brief(item) for item in similar],
+        }
+
+    async def async_merge_ingredients(self, source_id: str, target_id: str) -> None:
+        """Fold ``source`` into ``target``: recipes switch over, source is deleted.
+
+        Lines of the target that end up with the same unit within one recipe are
+        added together ("nach Bedarf" lines are merged among themselves).
+        """
+        if source_id == target_id:
+            raise MealPlannerError("invalid_merge", "Quelle und Ziel müssen verschieden sein")
+        source = self.ingredients.data.get(source_id)
+        target = self.ingredients.data.get(target_id)
+        if source is None or target is None:
+            raise MealPlannerError("not_found", "Zutat nicht gefunden")
+        for recipe in list(self.recipes.data.values()):
+            lines = recipe.get("ingredients", [])
+            if any(line["ingredient_id"] == source_id for line in lines):
+                await self.recipes.async_update_item(
+                    recipe["id"],
+                    {"ingredients": _merge_lines(lines, source_id, target_id)},
+                )
+        if target.get("default_unit") is None and source.get("default_unit"):
+            await self.ingredients.async_update_item(
+                target_id, {"default_unit": source["default_unit"]}
+            )
+        await self.ingredients.async_delete_item(source_id)
+        await self.async_refresh()
 
     async def async_delete_ingredient(self, ingredient_id: str) -> None:
         """Delete a catalog ingredient that no recipe uses any more."""

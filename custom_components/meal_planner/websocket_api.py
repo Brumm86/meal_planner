@@ -105,7 +105,33 @@ async def ws_recipe_delete(coordinator: MealPlannerCoordinator, msg: dict[str, A
 @_handler
 async def ws_ingredient_save(coordinator: MealPlannerCoordinator, msg: dict[str, Any]) -> dict:
     item = await coordinator.async_save_ingredient(msg.get("ingredient_id"), msg["ingredient"])
-    return {"id": item["id"]}
+    # The item itself is returned so the card can use it before the pushed
+    # snapshot has necessarily arrived.
+    return {"id": item["id"], "ingredient": {**item, "recipe_count": 0}}
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}ingredient/similar",
+        vol.Required("name"): str,
+        vol.Optional("exclude_id"): str,
+    }
+)
+@_handler
+async def ws_ingredient_similar(coordinator: MealPlannerCoordinator, msg: dict[str, Any]) -> dict:
+    return coordinator.find_similar_ingredients(msg["name"], msg.get("exclude_id"))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}ingredient/merge",
+        vol.Required("source_id"): str,
+        vol.Required("target_id"): str,
+    }
+)
+@_handler
+async def ws_ingredient_merge(coordinator: MealPlannerCoordinator, msg: dict[str, Any]) -> None:
+    await coordinator.async_merge_ingredients(msg["source_id"], msg["target_id"])
 
 
 @websocket_api.websocket_command(
@@ -156,6 +182,8 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
         ws_recipe_delete,
         ws_ingredient_save,
         ws_ingredient_delete,
+        ws_ingredient_similar,
+        ws_ingredient_merge,
         ws_plan_set,
         ws_plan_clear,
     ):
