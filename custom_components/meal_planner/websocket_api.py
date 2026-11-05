@@ -170,6 +170,34 @@ async def ws_plan_clear(coordinator: MealPlannerCoordinator, msg: dict[str, Any]
     await coordinator.async_clear_plan(msg["date"])
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}shopping/preview",
+        vol.Optional("start"): str,
+        vol.Optional("end"): str,
+    }
+)
+@_handler
+async def ws_shopping_preview(coordinator: MealPlannerCoordinator, msg: dict[str, Any]) -> dict:
+    return await coordinator.async_shopping_preview(msg.get("start"), msg.get("end"))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}shopping/transfer",
+        vol.Optional("start"): str,
+        vol.Optional("end"): str,
+        vol.Required("items"): [dict],
+        vol.Optional("extras", default=list): [vol.All(str, vol.Length(max=120))],
+    }
+)
+@_handler
+async def ws_shopping_transfer(coordinator: MealPlannerCoordinator, msg: dict[str, Any]) -> dict:
+    return await coordinator.async_transfer_to_bring(
+        msg.get("start"), msg.get("end"), items=msg["items"], extras=msg["extras"]
+    )
+
+
 @callback
 def async_setup_websocket_api(hass: HomeAssistant) -> None:
     """Register the commands once per Home Assistant run."""
@@ -186,5 +214,7 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
         ws_ingredient_merge,
         ws_plan_set,
         ws_plan_clear,
+        ws_shopping_preview,
+        ws_shopping_transfer,
     ):
         websocket_api.async_register_command(hass, command)

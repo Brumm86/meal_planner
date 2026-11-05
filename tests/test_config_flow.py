@@ -48,3 +48,25 @@ async def test_options_flow_updates_and_reloads(hass, init_integration) -> None:
     await hass.async_block_till_done()
     assert init_integration.options == {CONF_HOUSEHOLD_SIZE: 2, CONF_HORIZON_DAYS: 14}
     assert init_integration.runtime_data.household_size == 2
+
+
+async def test_bring_list_is_optional_and_can_be_set_and_cleared(hass, init_integration) -> None:
+    """The Bring list lands in the options only when chosen."""
+    from custom_components.meal_planner.const import CONF_BRING_ENTITY
+
+    result = await hass.config_entries.options.async_init(init_integration.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_HOUSEHOLD_SIZE: 4, CONF_HORIZON_DAYS: 10, CONF_BRING_ENTITY: "todo.bring_einkauf"},
+    )
+    await hass.async_block_till_done()
+    assert init_integration.options[CONF_BRING_ENTITY] == "todo.bring_einkauf"
+    assert init_integration.runtime_data.bring_entity == "todo.bring_einkauf"
+
+    result = await hass.config_entries.options.async_init(init_integration.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_HOUSEHOLD_SIZE: 4, CONF_HORIZON_DAYS: 10}
+    )
+    await hass.async_block_till_done()
+    assert CONF_BRING_ENTITY not in init_integration.options
+    assert init_integration.runtime_data.bring_entity is None

@@ -8,6 +8,7 @@ Each collection owns one ``Store`` file:
 * ``meal_planner.ingredients`` - ingredient catalog (the only place ingredient
   names live; recipes reference it by id, so one product = one entry)
 * ``meal_planner.plan``        - one entry per day (id = ISO date)
+* ``meal_planner.transfers``   - per day: what has already been handed to Bring
 
 Only schema validation and uniqueness rules live here; the cross-collection
 logic (resolving ingredient names, refusing deletes of items still in use,
@@ -33,6 +34,7 @@ from .const import (
     STORAGE_KEY_INGREDIENTS,
     STORAGE_KEY_PLAN,
     STORAGE_KEY_RECIPES,
+    STORAGE_KEY_TRANSFERS,
     STORAGE_VERSION,
     UNITS,
 )
@@ -312,13 +314,57 @@ class PlanCollection(_MealPlannerCollection):
         return _validate_plan_item(updated)
 
 
+# One shopping position as remembered per day: amounts are kept in the base
+# unit of their dimension (g, ml, ...); ``dimension`` "" + amount None means
+# "nach Bedarf" (no quantity).
+TRANSFER_LINE_SCHEMA = vol.Schema(
+    {
+        vol.Required("ingredient_id"): str,
+        vol.Required("dimension"): str,
+        vol.Required("amount"): vol.Any(None, vol.Coerce(float)),
+    }
+)
+
+TRANSFER_CREATE_SCHEMA = vol.Schema(
+    {
+        vol.Required("date"): iso_date,
+        vol.Optional("lines", default=list): [TRANSFER_LINE_SCHEMA],
+    }
+)
+TRANSFER_UPDATE_SCHEMA = vol.Schema({vol.Optional("lines"): [TRANSFER_LINE_SCHEMA]})
+
+
+class TransferCollection(_MealPlannerCollection):
+    """What was already transferred to Bring, one entry per plan day.
+
+    Kept apart from the plan so the record survives a day being cleared and
+    planned again: a later change only ever *adds* the difference.
+    """
+
+    CREATE_SCHEMA = TRANSFER_CREATE_SCHEMA
+    UPDATE_SCHEMA = TRANSFER_UPDATE_SCHEMA
+
+    @staticmethod
+    def id_for(date_iso: str) -> str:
+        """Collection id of the record for ``date_iso``."""
+        return slugify(date_iso)
+
+    def get_by_date(self, date_iso: str) -> dict[str, Any] | None:
+        """Return the record of ``date_iso``, if any."""
+        return self.data.get(self.id_for(date_iso))
+
+    def _get_suggested_id(self, info: dict) -> str:
+        return self.id_for(info["date"])
+
+
 async def async_load_collections(
     hass: HomeAssistant,
-) -> tuple[RecipeCollection, IngredientCollection, PlanCollection]:
-    """Create and load the three collections."""
+) -> tuple[RecipeCollection, IngredientCollection, PlanCollection, TransferCollection]:
+    """Create and load the four collections."""
     recipes = RecipeCollection(Store(hass, STORAGE_VERSION, STORAGE_KEY_RECIPES))
     ingredients = IngredientCollection(Store(hass, STORAGE_VERSION, STORAGE_KEY_INGREDIENTS))
     plan = PlanCollection(Store(hass, STORAGE_VERSION, STORAGE_KEY_PLAN))
-    for coll in (recipes, ingredients, plan):
+    transfers = TransferCollection(Store(hass, STORAGE_VERSION, STORAGE_KEY_TRANSFERS))
+    for coll in (recipes, ingredients, plan, transfers):
         await coll.async_load()
-    return recipes, ingredients, plan
+    return recipes, ingredients, plan, transfers

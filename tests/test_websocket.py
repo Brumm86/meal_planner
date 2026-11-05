@@ -18,7 +18,7 @@ async def test_subscribe_pushes_snapshot_on_every_change(hass, hass_ws_client, i
     first = await client.receive_json()
     assert first["type"] == "event"
     snapshot = first["event"]
-    assert snapshot["settings"] == {"household_size": 4, "horizon_days": 10}
+    assert snapshot["settings"] == {"household_size": 4, "horizon_days": 10, "bring_configured": False}
     assert snapshot["recipes"] == [] and snapshot["plan"] == {}
     assert "g" in snapshot["units"] and "Stück" in snapshot["units"]
 

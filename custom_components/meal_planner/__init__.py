@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import voluptuous as vol
+
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
-from .const import CARD_FILENAME, CARD_URL_PATH, DOMAIN
-from .coordinator import MealPlannerCoordinator
+from .const import CARD_FILENAME, CARD_URL_PATH, DOMAIN, SERVICE_TRANSFER_TO_BRING
+from .coordinator import MealPlannerCoordinator, MealPlannerError
 from .storage import async_load_collections
 from .websocket_api import async_setup_websocket_api
 
@@ -21,10 +26,49 @@ PLATFORMS: list = []
 type MealPlannerConfigEntry = ConfigEntry[MealPlannerCoordinator]
 
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+SERVICE_TRANSFER_SCHEMA = vol.Schema(
+    {
+        vol.Optional("start_date"): cv.date,
+        vol.Optional("end_date"): cv.date,
+    }
+)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration's actions (once, independent of the config entry)."""
+
+    async def _transfer_to_bring(call: ServiceCall) -> dict[str, int]:
+        entries = hass.config_entries.async_entries(DOMAIN)
+        entry = next((e for e in entries if e.state is ConfigEntryState.LOADED), None)
+        if entry is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="not_loaded"
+            )
+        start = call.data.get("start_date")
+        end = call.data.get("end_date")
+        try:
+            return await entry.runtime_data.async_transfer_to_bring(
+                start.isoformat() if start else None, end.isoformat() if end else None
+            )
+        except MealPlannerError as err:
+            raise ServiceValidationError(err.message) from err
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_TRANSFER_TO_BRING,
+        _transfer_to_bring,
+        schema=SERVICE_TRANSFER_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: MealPlannerConfigEntry) -> bool:
     """Load the storage collections, build the coordinator, expose the API + card."""
-    recipes, ingredients, plan = await async_load_collections(hass)
-    coordinator = MealPlannerCoordinator(hass, entry, recipes, ingredients, plan)
+    recipes, ingredients, plan, transfers = await async_load_collections(hass)
+    coordinator = MealPlannerCoordinator(hass, entry, recipes, ingredients, plan, transfers)
     await coordinator.async_config_entry_first_refresh()
     coordinator.async_start()
     entry.runtime_data = coordinator

@@ -13,6 +13,7 @@ CARD_FILENAME: Final = "meal-planner-card.js"
 # Config entry (data) / options
 CONF_HOUSEHOLD_SIZE: Final = "household_size"
 CONF_HORIZON_DAYS: Final = "horizon_days"
+CONF_BRING_ENTITY: Final = "bring_entity"
 
 DEFAULT_HOUSEHOLD_SIZE: Final = 4
 MIN_HOUSEHOLD_SIZE: Final = 1
@@ -27,6 +28,7 @@ STORAGE_VERSION: Final = 1
 STORAGE_KEY_RECIPES: Final = f"{DOMAIN}.recipes"
 STORAGE_KEY_INGREDIENTS: Final = f"{DOMAIN}.ingredients"
 STORAGE_KEY_PLAN: Final = f"{DOMAIN}.plan"
+STORAGE_KEY_TRANSFERS: Final = f"{DOMAIN}.transfers"
 
 # Fixed unit list (Zusammenfassung: "Zutatenkatalog mit fester Einheitenliste").
 # unit -> (dimension, factor to the dimension's base unit). Units within one
@@ -54,3 +56,9 @@ PLAN_KIND_TEXT: Final = "text"
 
 # Websocket commands
 WS_PREFIX: Final = f"{DOMAIN}/"
+
+# Shopping list: longest range one preview / transfer may cover.
+MAX_SHOPPING_DAYS: Final = 31
+
+# Service
+SERVICE_TRANSFER_TO_BRING: Final = "transfer_to_bring"

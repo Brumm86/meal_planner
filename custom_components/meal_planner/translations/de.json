@@ -6,7 +6,11 @@
         "description": "Lege fest, für wie viele Personen standardmäßig gekocht wird und wie viele Tage der Plan in der Karte anzeigt. Beides lässt sich später ändern.",
         "data": {
           "household_size": "Personen im Haushalt",
-          "horizon_days": "Angezeigte Planungstage"
+          "horizon_days": "Angezeigte Planungstage",
+          "bring_entity": "Bring-Einkaufsliste (optional)"
+        },
+        "data_description": {
+          "bring_entity": "Die Liste, an die der Einkauf übergeben wird. Ohne Auswahl ist die Übergabe deaktiviert."
         }
       }
     },
@@ -20,9 +24,34 @@
         "title": "Meal Planner",
         "data": {
           "household_size": "Personen im Haushalt",
-          "horizon_days": "Angezeigte Planungstage"
+          "horizon_days": "Angezeigte Planungstage",
+          "bring_entity": "Bring-Einkaufsliste (optional)"
+        },
+        "data_description": {
+          "bring_entity": "Die Liste, an die der Einkauf übergeben wird. Ohne Auswahl ist die Übergabe deaktiviert."
         }
       }
+    }
+  },
+  "services": {
+    "transfer_to_bring": {
+      "name": "An Bring übertragen",
+      "description": "Überträgt die Einkaufsliste der geplanten Tage an die Bring-Liste. Bereits übertragene Mengen werden nicht doppelt hinzugefügt; Zutaten, die auf der Liste noch offen sind, werden übersprungen.",
+      "fields": {
+        "start_date": {
+          "name": "Von",
+          "description": "Erster Tag (Standard: heute)."
+        },
+        "end_date": {
+          "name": "Bis",
+          "description": "Letzter Tag (Standard: letzter Tag des Planfensters)."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "not_loaded": {
+      "message": "Meal Planner ist nicht geladen."
     }
   }
 }

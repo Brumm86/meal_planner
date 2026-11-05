@@ -1,10 +1,10 @@
 /*
  * meal-planner-card - Lovelace card of the Meal Planner integration.
  *
- * One card with tabs: "Plan" (rolling lunch plan), "Rezepte" (recipes) and
- * "Zutaten" (the ingredient catalog). Recipes only reference catalog
+ * One card with tabs: "Plan" (rolling lunch plan), "Rezepte" (recipes),
+ * "Zutaten" (the ingredient catalog) and "Einkauf" (editable shopping preview
+ * that is handed over to Bring). Recipes only reference catalog
  * ingredients (searchable dropdown), so one product exists exactly once.
- * Further tabs (Einkauf) follow in later stages.
  *
  * Deliberately a plain script: NO import/export statements and no syntax newer
  * than what older WebViews accept (no optional chaining, class fields, ...).
@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  var CARD_VERSION = "0.2.1";
+  var CARD_VERSION = "0.3.0";
   var QUICK_TEXTS = ["Reste", "Auswärts", "Bestellen"];
 
   function esc(value) {
@@ -140,7 +140,13 @@
     ".dialog{background:var(--card-background-color);color:var(--primary-text-color);border-radius:12px;padding:16px;width:min(560px,100%);max-height:85vh;overflow:auto}" +
     ".dialog h3{margin:0 0 10px}" +
     "ul.lines{margin:6px 0 12px;padding-left:20px}" +
-    "pre.text{white-space:pre-wrap;font:inherit;margin:4px 0 12px}";
+    "pre.text{white-space:pre-wrap;font:inherit;margin:4px 0 12px}" +
+    ".srow{display:grid;grid-template-columns:auto minmax(0,1fr) 90px 100px;gap:6px 10px;align-items:center;padding:6px;border-bottom:1px solid var(--divider-color)}" +
+    ".srow.off .sname{text-decoration:line-through;color:var(--secondary-text-color)}" +
+    ".srow input[type=checkbox]{width:20px;height:20px}" +
+    ".srow input:not([type=checkbox]),.srow select{width:100%;min-width:0}" +
+    ".badge{display:inline-block;margin-left:6px;font-size:.8em;color:var(--secondary-text-color);border:1px solid var(--divider-color);border-radius:10px;padding:0 8px}" +
+    ".ok{background:var(--secondary-background-color);border-left:4px solid var(--primary-color);border-radius:6px;padding:8px 12px;margin-bottom:10px}";
 
   class MealPlannerCard extends HTMLElement {
     constructor() {
@@ -158,6 +164,7 @@
       this._ingSearch = "";
       this._ingDialog = null; // {mode: new|edit|merge, id, name, unit, similar, force, search, target}
       this._confirmIngDelete = null;
+      this._shop = null; // {start, end, positions, surplus, extras, bring, dirty, loading, message}
       this._comboBlurTimer = null;
       this._unsub = null;
       this._subscribing = false;
@@ -238,6 +245,11 @@
         .subscribeMessage(function (snapshot) {
           self._snap = snapshot;
           self._error = self._error === "not_loaded" ? "" : self._error;
+          if (self._tab === "shop") {
+            // Never throw away edits of the preview; otherwise follow plan changes.
+            if (!self._shop || !self._shop.dirty) self._loadShop();
+            return;
+          }
           if (!self._editor && !self._picker && !self._ingDialog) self._render();
         }, { type: "meal_planner/subscribe" })
         .then(function (unsub) {
@@ -313,8 +325,9 @@
           this._tabButton("plan", "Plan") +
           this._tabButton("recipes", "Rezepte") +
           this._tabButton("ingredients", "Zutaten") +
+          this._tabButton("shop", "Einkauf") +
           "</div>" +
-          (this._tab === "plan" ? this._renderPlan() : this._tab === "recipes" ? this._renderRecipes() : this._renderIngredients()) +
+          (this._tab === "plan" ? this._renderPlan() : this._tab === "recipes" ? this._renderRecipes() : this._tab === "shop" ? this._renderShop() : this._renderIngredients()) +
           (this._picker ? this._renderPicker() : "") +
           (this._ingDialog ? this._renderIngDialog() : "");
       }
@@ -411,6 +424,131 @@
       });
       html += '</div><div style="text-align:right;margin-top:10px"><button class="btn secondary" data-action="close-picker">Abbrechen</button></div></div></div>';
       return html;
+    }
+
+    // -------------------------------------------------------------- shopping
+
+    _loadShop(range) {
+      var self = this;
+      var s = this._shop || (this._shop = { start: null, end: null, positions: [], surplus: [], extras: [], bring: null, dirty: false, loading: false, message: "" });
+      if (range) {
+        s.start = range.start;
+        s.end = range.end;
+      }
+      s.loading = true;
+      var msg = { type: "meal_planner/shopping/preview" };
+      if (s.start) msg.start = s.start;
+      if (s.end) msg.end = s.end;
+      this._render();
+      this._call(msg).then(function (res) {
+        s.start = res.start;
+        s.end = res.end;
+        s.bring = res.bring;
+        s.surplus = res.surplus;
+        // Positions Bring already has open start unchecked ("schon auf der Liste").
+        s.positions = res.positions.map(function (p) {
+          return { ingredient_id: p.ingredient_id, name: p.name, amount: formatAmount(p.amount), unit: p.unit || "", on_list: p.on_list, checked: !p.on_list };
+        });
+        s.dirty = s.extras.length > 0;
+        s.loading = false;
+        self._render();
+      }).catch(function () {
+        s.loading = false;
+        self._render();
+      });
+    }
+
+    _syncShop() {
+      var s = this._shop;
+      if (!s) return;
+      var rows = this.shadowRoot.querySelectorAll(".srow");
+      for (var i = 0; i < rows.length; i++) {
+        var p = s.positions[Number(rows[i].getAttribute("data-pos"))];
+        if (!p) continue;
+        p.checked = rows[i].querySelector('[data-s="check"]').checked;
+        p.amount = rows[i].querySelector('[data-s="amount"]').value;
+        p.unit = rows[i].querySelector('[data-s="unit"]').value;
+      }
+    }
+
+    _shopCount() {
+      var s = this._shop;
+      var n = s.extras.length;
+      s.positions.forEach(function (p) { if (p.checked) n++; });
+      return n;
+    }
+
+    _renderShop() {
+      var self = this;
+      var s = this._shop;
+      if (!s) {
+        this._loadShop();
+        return '<div class="muted">Lade…</div>';
+      }
+      var html = '<div class="toolbar"><label>von <input type="date" id="mp-shop-start" value="' + esc(s.start || "") + '" min="' + esc(this._snap.today) + '" /></label>' +
+        '<label>bis <input type="date" id="mp-shop-end" value="' + esc(s.end || "") + '" min="' + esc(this._snap.today) + '" /></label>' +
+        '<button class="btn secondary small" data-action="shop-refresh">Neu berechnen</button></div>';
+      if (s.message) html += '<div class="ok">' + esc(s.message) + "</div>";
+      if (s.bring && !s.bring.configured) {
+        html += '<div class="hint">Es ist noch keine Bring-Liste eingestellt (Einstellungen → Geräte &amp; Dienste → Meal Planner → Konfigurieren). Ohne sie ist die Übertragung deaktiviert.</div>';
+      } else if (s.bring && s.bring.error) {
+        html += '<div class="hint">' + esc(s.bring.error) + " – ob eine Zutat schon auf der Liste steht, lässt sich gerade nicht prüfen.</div>";
+      }
+      if (s.loading && !s.positions.length) html += '<div class="muted">Berechne…</div>';
+      if (!s.loading && !s.positions.length && !s.extras.length) html += '<div class="muted" style="padding:8px">Für diesen Zeitraum ist nichts mehr zu kaufen.</div>';
+      s.positions.forEach(function (p, i) {
+        html +=
+          '<div class="srow' + (p.checked ? "" : " off") + '" data-pos="' + i + '">' +
+          '<input type="checkbox" data-s="check" title="Übertragen"' + (p.checked ? " checked" : "") + " />" +
+          '<div class="sname">' + esc(p.name) + (p.on_list ? '<span class="badge">schon auf der Liste</span>' : "") + "</div>" +
+          '<input data-s="amount" inputmode="decimal" placeholder="Menge" value="' + esc(p.amount) + '" />' +
+          '<select data-s="unit">' + self._unitOptions(p.unit, true) + "</select></div>";
+      });
+      s.extras.forEach(function (t, i) {
+        html += '<div class="irow"><div class="info">' + esc(t) + ' <span class="badge">ergänzt</span></div><button class="iconbtn" title="Entfernen" data-action="shop-remove-extra" data-i="' + i + '">✕</button></div>';
+      });
+      html += '<div class="toolbar" style="margin-top:10px"><input id="mp-shop-extra" placeholder="Weitere Position ergänzen…" style="flex:1" /><button class="btn secondary small" data-action="shop-add-extra">Hinzufügen</button></div>';
+      if (s.surplus.length) {
+        html += '<div class="hint"><b>Nach der Übertragung geändert</b> – bei Bring bleibt es unverändert, du musst ggf. selbst streichen:<ul class="lines">' +
+          s.surplus.map(function (x) {
+            return "<li>" + esc(dayLabel(x.date)) + ": " + esc(x.amount === null ? x.name + " (nach Bedarf)" : formatAmount(x.amount) + " " + x.unit + " " + x.name) + "</li>";
+          }).join("") + "</ul></div>";
+      }
+      var count = this._shopCount();
+      var canSend = s.bring && s.bring.configured && !s.loading;
+      html += '<div class="toolbar" style="margin-top:12px"><button class="btn" data-action="shop-transfer"' + (canSend ? "" : " disabled") + ">" +
+        (count ? count + (count === 1 ? " Position" : " Positionen") + " an Bring übertragen" : "Zeitraum als erledigt markieren") + "</button></div>";
+      if (!count && s.positions.length) html += '<div class="muted" style="font-size:.85em">Nichts angehakt: der Zeitraum gilt danach trotzdem als übertragen.</div>';
+      return html;
+    }
+
+    _shopTransfer() {
+      var self = this;
+      var s = this._shop;
+      this._syncShop();
+      var items = [];
+      try {
+        s.positions.forEach(function (p) {
+          if (!p.checked) return;
+          var amount = parseAmount(p.amount);
+          var unit = p.unit || null;
+          if (isNaN(amount)) throw new Error("„" + p.name + "“: Menge ist keine Zahl.");
+          if (amount !== null && amount <= 0) throw new Error("„" + p.name + "“: Menge muss größer als 0 sein.");
+          if (amount !== null && !unit) throw new Error("„" + p.name + "“: Einheit fehlt.");
+          if (amount === null && unit) throw new Error("„" + p.name + "“: Menge fehlt.");
+          items.push({ ingredient_id: p.ingredient_id, amount: amount, unit: unit });
+        });
+      } catch (e) {
+        this._error = e.message;
+        this._render();
+        return;
+      }
+      this._call({ type: "meal_planner/shopping/transfer", start: s.start, end: s.end, items: items, extras: s.extras }).then(function (res) {
+        s.extras = [];
+        s.dirty = false;
+        s.message = res.added + (res.added === 1 ? " Position" : " Positionen") + " an Bring übertragen.";
+        self._loadShop();
+      }).catch(function () {});
     }
 
     // ----------------------------------------------------------- ingredients
@@ -851,6 +989,22 @@
         this._render();
         return;
       }
+      if (t.id === "mp-shop-start" || t.id === "mp-shop-end") {
+        var sa = this.shadowRoot.getElementById("mp-shop-start").value;
+        var sb = this.shadowRoot.getElementById("mp-shop-end").value;
+        if (sa && sb) {
+          this._shop.message = "";
+          this._loadShop({ start: sa, end: sb });
+        }
+        return;
+      }
+      if (t.getAttribute && t.getAttribute("data-s") && this._shop) {
+        this._syncShop();
+        this._shop.dirty = true;
+        this._shop.message = "";
+        this._render();
+        return;
+      }
       var kind = t.getAttribute ? t.getAttribute("data-l") : null;
       var row = kind && t.closest ? t.closest(".ing") : null;
       if (kind === "unit" && row) row.setAttribute("data-unit-touched", "1");
@@ -878,7 +1032,35 @@
       switch (action) {
         case "tab":
           this._tab = el.getAttribute("data-tab");
+          if (this._tab === "shop") {
+            if (this._shop) this._shop.message = "";
+            this._loadShop();
+          } else {
+            this._render();
+          }
+          break;
+        case "shop-refresh":
+          if (this._shop) this._shop.message = "";
+          this._loadShop();
+          break;
+        case "shop-add-extra": {
+          var xin = this.shadowRoot.getElementById("mp-shop-extra");
+          var xt = xin ? xin.value.trim() : "";
+          if (!xt) break;
+          this._syncShop();
+          this._shop.extras.push(xt);
+          this._shop.dirty = true;
+          this._shop.message = "";
           this._render();
+          break;
+        }
+        case "shop-remove-extra":
+          this._syncShop();
+          this._shop.extras.splice(Number(el.getAttribute("data-i")), 1);
+          this._render();
+          break;
+        case "shop-transfer":
+          this._shopTransfer();
           break;
         case "dismiss-error":
           this._error = "";
@@ -1132,6 +1314,6 @@
   window.customCards.push({
     type: "meal-planner-card",
     name: "Meal Planner",
-    description: "Mittagessen planen: Rezepte und Wochenplan (v" + CARD_VERSION + ")",
+    description: "Mittagessen planen: Rezepte, Wochenplan und Einkauf (v" + CARD_VERSION + ")",
   });
 })();

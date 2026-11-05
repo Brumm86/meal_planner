@@ -16,6 +16,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_BRING_ENTITY,
     CONF_HORIZON_DAYS,
     CONF_HOUSEHOLD_SIZE,
     DEFAULT_HORIZON_DAYS,
@@ -28,7 +29,7 @@ from .const import (
 )
 
 
-def _settings_schema(household: int, horizon: int) -> vol.Schema:
+def _settings_schema(household: int, horizon: int, bring_entity: str | None = None) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(CONF_HOUSEHOLD_SIZE, default=household): selector.NumberSelector(
@@ -47,15 +48,23 @@ def _settings_schema(household: int, horizon: int) -> vol.Schema:
                     mode=selector.NumberSelectorMode.BOX,
                 )
             ),
+            vol.Optional(
+                CONF_BRING_ENTITY, description={"suggested_value": bring_entity}
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="todo", integration="bring")
+            ),
         }
     )
 
 
-def _clean(user_input: dict[str, Any]) -> dict[str, int]:
-    return {
+def _clean(user_input: dict[str, Any]) -> dict[str, Any]:
+    cleaned: dict[str, Any] = {
         CONF_HOUSEHOLD_SIZE: int(user_input[CONF_HOUSEHOLD_SIZE]),
         CONF_HORIZON_DAYS: int(user_input[CONF_HORIZON_DAYS]),
     }
+    if user_input.get(CONF_BRING_ENTITY):
+        cleaned[CONF_BRING_ENTITY] = user_input[CONF_BRING_ENTITY]
+    return cleaned
 
 
 class MealPlannerConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -93,5 +102,6 @@ class MealPlannerOptionsFlow(OptionsFlowWithReload):
             data_schema=_settings_schema(
                 int(options.get(CONF_HOUSEHOLD_SIZE, DEFAULT_HOUSEHOLD_SIZE)),
                 int(options.get(CONF_HORIZON_DAYS, DEFAULT_HORIZON_DAYS)),
+                options.get(CONF_BRING_ENTITY),
             ),
         )

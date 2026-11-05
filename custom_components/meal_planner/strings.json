@@ -6,7 +6,11 @@
         "description": "Set for how many people you usually cook and how many days the plan shows in the card. Both can be changed later.",
         "data": {
           "household_size": "People in the household",
-          "horizon_days": "Days shown in the plan"
+          "horizon_days": "Days shown in the plan",
+          "bring_entity": "Bring shopping list (optional)"
+        },
+        "data_description": {
+          "bring_entity": "The list the shopping list is handed to. Without a selection the transfer is disabled."
         }
       }
     },
@@ -20,9 +24,34 @@
         "title": "Meal Planner",
         "data": {
           "household_size": "People in the household",
-          "horizon_days": "Days shown in the plan"
+          "horizon_days": "Days shown in the plan",
+          "bring_entity": "Bring shopping list (optional)"
+        },
+        "data_description": {
+          "bring_entity": "The list the shopping list is handed to. Without a selection the transfer is disabled."
         }
       }
+    }
+  },
+  "services": {
+    "transfer_to_bring": {
+      "name": "Transfer to Bring",
+      "description": "Hands the shopping list of the planned days to the Bring list. Quantities already transferred are not added twice; ingredients still open on the list are skipped.",
+      "fields": {
+        "start_date": {
+          "name": "From",
+          "description": "First day (default: today)."
+        },
+        "end_date": {
+          "name": "To",
+          "description": "Last day (default: last day of the plan window)."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "not_loaded": {
+      "message": "Meal Planner is not loaded."
     }
   }
 }

@@ -1,0 +1,10 @@
+transfer_to_bring:
+  fields:
+    start_date:
+      required: false
+      selector:
+        date:
+    end_date:
+      required: false
+      selector:
+        date:
