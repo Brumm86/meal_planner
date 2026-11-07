@@ -33,6 +33,14 @@
       }
     }
   },
+  "selector": {
+    "recipe_roles": {
+      "options": {
+        "main": "Hauptgericht",
+        "side": "Beilage"
+      }
+    }
+  },
   "services": {
     "transfer_to_bring": {
       "name": "An Bring übertragen",
@@ -50,7 +58,7 @@
     },
     "add_meal": {
       "name": "Gericht hinzufügen",
-      "description": "Fügt einem Tag ein Gericht hinzu (Rezept oder Freitext). Ein Tag kann mehrere Gerichte haben.",
+      "description": "Fügt einem Tag ein Gericht hinzu (Rezept oder Freitext). Ein Tag kann mehrere Gerichte haben; an ein Rezept lassen sich Beilagen hängen.",
       "fields": {
         "date": {
           "name": "Tag",
@@ -67,6 +75,10 @@
         "portions": {
           "name": "Portionen",
           "description": "Anzahl Portionen (Standard: Haushaltsgröße). Nur bei Rezepten."
+        },
+        "sides": {
+          "name": "Beilagen",
+          "description": "Beilagen (Namen oder IDs von Rezepten), die zum Rezept gehören; sie folgen seinen Portionen. Nur bei Rezepten; jede muss als Beilage gekennzeichnet sein."
         }
       }
     },
@@ -100,7 +112,7 @@
     },
     "get_plan": {
       "name": "Plan abfragen",
-      "description": "Liefert den Plan für einen Zeitraum, pro Tag mit allen Gerichten.",
+      "description": "Liefert den Plan für einen Zeitraum, pro Tag mit allen Gerichten und ihren Beilagen.",
       "fields": {
         "start_date": {
           "name": "Von",
@@ -114,7 +126,7 @@
     },
     "suggest_meals": {
       "name": "Vorschläge machen",
-      "description": "Schlägt Rezepte aus den vorhandenen vor, standardmäßig für die Tage des Planfensters ohne Gericht. Längst nicht geplante Rezepte kommen zuerst. Es wird nichts gespeichert; mit „Vorschläge übernehmen“ landen sie im Plan.",
+      "description": "Schlägt Hauptgerichte aus den vorhandenen Rezepten vor, standardmäßig für die Tage des Planfensters ohne Gericht. Längst nicht geplante Rezepte kommen zuerst; dazu wird eine der am Rezept hinterlegten Beilagen vorgeschlagen. Es wird nichts gespeichert; mit „Vorschläge übernehmen“ landen sie im Plan.",
       "fields": {
         "dates": {
           "name": "Tage",
@@ -132,7 +144,7 @@
       "fields": {
         "suggestions": {
           "name": "Vorschläge",
-          "description": "Liste aus Einträgen mit date, recipe (Name oder ID) und optional portions."
+          "description": "Liste aus Einträgen mit date, recipe (Name oder ID) und optional portions und sides (Namen oder IDs)."
         }
       }
     },
@@ -167,12 +179,20 @@
         "ingredients": {
           "name": "Zutaten",
           "description": "Liste aus Einträgen mit name sowie optional amount und unit (g, kg, ml, l, Stück, EL, TL, Bund, Packung, Dose, Zehe, Prise)."
+        },
+        "roles": {
+          "name": "Rolle",
+          "description": "Ob das Rezept ein Hauptgericht, eine Beilage oder beides ist (Standard: Hauptgericht)."
+        },
+        "sides": {
+          "name": "Passende Beilagen",
+          "description": "Beilagen (Namen oder IDs von Rezepten), die zu diesem Rezept passen. Nur bei Hauptgerichten; jede muss als Beilage gekennzeichnet sein."
         }
       }
     },
     "delete_recipe": {
       "name": "Rezept löschen",
-      "description": "Löscht ein Rezept, sofern es heute oder später nicht mehr im Plan steht.",
+      "description": "Löscht ein Rezept, sofern es heute oder später nicht mehr im Plan steht (als Haupt- oder Beilage).",
       "fields": {
         "recipe": {
           "name": "Rezept",

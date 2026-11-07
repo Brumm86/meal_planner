@@ -92,7 +92,15 @@ async def test_suggestions_for_single_days_and_exclusions(hass, init_integration
     d = await _recipe(c, "D", last_planned=_day(-7))
 
     one = c.suggest_meals([_day(3)])
-    assert one["suggestions"] == [{"date": _day(3), "recipe_id": a["id"], "recipe_name": "A"}]
+    assert one["suggestions"] == [
+        {
+            "date": _day(3),
+            "recipe_id": a["id"],
+            "recipe_name": "A",
+            "side_ids": [],
+            "side_names": [],
+        }
+    ]
     assert one["unfilled"] == []
 
     again = c.suggest_meals([_day(3)], exclude_recipe_ids=[a["id"]])

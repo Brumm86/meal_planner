@@ -34,6 +34,9 @@ from .const import (
     MAX_SHOPPING_DAYS,
     PLAN_KIND_RECIPE,
     PLAN_KIND_TEXT,
+    ROLE_MAIN,
+    ROLE_SIDE,
+    ROLES,
     UNITS,
 )
 from . import shopping
@@ -63,6 +66,11 @@ class MealPlannerError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def recipe_roles(recipe: dict[str, Any]) -> list[str]:
+    """Roles of a recipe; recipes stored before 0.5.0 have none and are main dishes."""
+    return list(recipe.get("roles") or [ROLE_MAIN])
 
 
 def _merge_lines(
@@ -165,6 +173,7 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "recipe_id": entry.get("recipe_id"),
             "text": entry.get("text"),
             "portions": entry.get("portions"),
+            "side_ids": list(entry.get("side_ids", [])),
         }
 
     # --------------------------------------------------------------- snapshot
@@ -175,7 +184,10 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def build_snapshot(self) -> dict[str, Any]:
         """Everything the card needs, JSON-serialisable."""
-        recipes = sorted(self.recipes.data.values(), key=lambda r: sort_key(r["name"]))
+        recipes = [
+            {**r, "roles": recipe_roles(r), "side_ids": list(r.get("side_ids", []))}
+            for r in sorted(self.recipes.data.values(), key=lambda r: sort_key(r["name"]))
+        ]
         used_in: dict[str, int] = {}
         for recipe in recipes:
             for ingredient_id in {line["ingredient_id"] for line in recipe.get("ingredients", [])}:
@@ -215,11 +227,14 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if day >= today.isoformat():
                 continue
             if entry["kind"] == PLAN_KIND_RECIPE and not entry.get("counted"):
-                recipe = self.recipes.data.get(entry["recipe_id"])
-                if recipe is not None:
-                    last = recipe.get("last_planned")
-                    if last is None or last < day:
-                        await self.recipes.async_update_item(recipe["id"], {"last_planned": day})
+                for recipe_id in (entry["recipe_id"], *entry.get("side_ids", [])):
+                    recipe = self.recipes.data.get(recipe_id)
+                    if recipe is not None:
+                        last = recipe.get("last_planned")
+                        if last is None or last < day:
+                            await self.recipes.async_update_item(
+                                recipe["id"], {"last_planned": day}
+                            )
                 await self.plan.async_update_item(entry["id"], {"counted": True})
             if day < cutoff:
                 await self.plan.async_delete_item(entry["id"])
@@ -238,6 +253,9 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ending up as two shopping-list items.
         """
         payload = dict(data)
+        if recipe_id is not None and recipe_id not in self.recipes.data:
+            raise MealPlannerError("not_found", "Rezept nicht gefunden")
+        self._prepare_roles_and_sides(recipe_id, payload)
         if "ingredients" in payload:
             payload["ingredients"] = await self._resolve_lines(payload["ingredients"])
         if recipe_id is None:
@@ -248,6 +266,86 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             item = await self.recipes.async_update_item(recipe_id, payload)
         await self.async_refresh()
         return item
+
+    def _prepare_roles_and_sides(self, recipe_id: str | None, payload: dict[str, Any]) -> None:
+        """Validate ``roles``/``side_ids`` of a recipe payload and keep them consistent.
+
+        * ``roles`` is a non-empty subset of main/side; ``side_ids`` (the side
+          dishes that go with the recipe) only make sense for main dishes and
+          are emptied otherwise.
+        * Every listed side dish must exist and be marked as side dish.
+        * A role cannot be taken away while the recipe is still used in it:
+          as a side dish (listed at another recipe or planned today or later)
+          or as a main dish (planned today or later).
+        """
+        if "roles" not in payload and "side_ids" not in payload:
+            return
+        existing = self.recipes.data.get(recipe_id) if recipe_id else None
+        if "roles" in payload:
+            raw = payload["roles"]
+            if not isinstance(raw, list) or not raw or any(r not in ROLES for r in raw):
+                raise vol.Invalid("roles must be a non-empty list of main/side")
+            roles = [role for role in ROLES if role in raw]
+        else:
+            roles = recipe_roles(existing) if existing else [ROLE_MAIN]
+        if "side_ids" in payload:
+            raw_ids = payload["side_ids"]
+            if not isinstance(raw_ids, list) or any(not isinstance(i, str) for i in raw_ids):
+                raise vol.Invalid("side_ids must be a list of recipe ids")
+            side_ids = list(dict.fromkeys(raw_ids))
+        else:
+            side_ids = list(existing.get("side_ids", [])) if existing else []
+        if ROLE_MAIN not in roles:
+            side_ids = []
+        self._check_sides(recipe_id, side_ids)
+        if existing is not None:
+            today = self.today().isoformat()
+            lost = set(recipe_roles(existing)) - set(roles)
+            if ROLE_SIDE in lost:
+                users = sorted(
+                    {r["name"] for r in self.recipes.data.values() if recipe_id in r.get("side_ids", [])}
+                    | {
+                        e["date"]
+                        for e in self.plan.data.values()
+                        if recipe_id in e.get("side_ids", []) and e["date"] >= today
+                    }
+                )
+                if users:
+                    raise MealPlannerError(
+                        "recipe_is_side",
+                        "Das Rezept ist noch als Beilage hinterlegt oder eingeplant: "
+                        + ", ".join(users),
+                    )
+            if ROLE_MAIN in lost:
+                upcoming = sorted(
+                    e["date"]
+                    for e in self.plan.data.values()
+                    if e["kind"] == PLAN_KIND_RECIPE
+                    and e["recipe_id"] == recipe_id
+                    and e["date"] >= today
+                )
+                if upcoming:
+                    raise MealPlannerError(
+                        "recipe_in_plan",
+                        "Das Rezept ist noch im Plan eingetragen: " + ", ".join(upcoming),
+                    )
+        payload["roles"] = roles
+        payload["side_ids"] = side_ids
+
+    def _check_sides(self, recipe_id: str | None, side_ids: list[str]) -> None:
+        """Every id must be an existing recipe that is marked as side dish."""
+        for side_id in side_ids:
+            if side_id == recipe_id:
+                raise MealPlannerError(
+                    "side_is_self", "Ein Rezept kann nicht seine eigene Beilage sein"
+                )
+            side = self.recipes.data.get(side_id)
+            if side is None:
+                raise MealPlannerError("not_found", "Beilage nicht gefunden")
+            if ROLE_SIDE not in recipe_roles(side):
+                raise MealPlannerError(
+                    "not_a_side", f"„{side['name']}“ ist nicht als Beilage gekennzeichnet"
+                )
 
     async def _resolve_lines(self, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         resolved: list[dict[str, Any]] = []
@@ -287,7 +385,8 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         uses = sorted(
             e["date"]
             for e in self.plan.data.values()
-            if e["kind"] == PLAN_KIND_RECIPE and e["recipe_id"] == recipe_id
+            if e["kind"] == PLAN_KIND_RECIPE
+            and (e["recipe_id"] == recipe_id or recipe_id in e.get("side_ids", []))
         )
         upcoming = [d for d in uses if d >= today]
         if upcoming:
@@ -296,10 +395,28 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Das Rezept ist noch im Plan eingetragen: " + ", ".join(upcoming),
             )
         for entry in list(self.plan.data.values()):
-            if entry["kind"] == PLAN_KIND_RECIPE and entry["recipe_id"] == recipe_id:
+            if entry["kind"] != PLAN_KIND_RECIPE:
+                continue
+            if entry["recipe_id"] == recipe_id:
                 await self.plan.async_update_item(
                     entry["id"],
-                    {"kind": PLAN_KIND_TEXT, "recipe_id": None, "text": recipe["name"], "portions": None},
+                    {
+                        "kind": PLAN_KIND_TEXT,
+                        "recipe_id": None,
+                        "text": recipe["name"],
+                        "portions": None,
+                        "side_ids": [],
+                    },
+                )
+            elif recipe_id in entry.get("side_ids", []):
+                await self.plan.async_update_item(
+                    entry["id"],
+                    {"side_ids": [i for i in entry["side_ids"] if i != recipe_id]},
+                )
+        for other in list(self.recipes.data.values()):
+            if recipe_id in other.get("side_ids", []):
+                await self.recipes.async_update_item(
+                    other["id"], {"side_ids": [i for i in other["side_ids"] if i != recipe_id]}
                 )
         await self.recipes.async_delete_item(recipe_id)
         await self.async_refresh()
@@ -419,6 +536,7 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         recipe_id: str | None = None,
         text: str | None = None,
         portions: int | None = None,
+        side_ids: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """Add one entry to a day without refreshing; ``None`` if the recipe is already there."""
         day = iso_date(date)
@@ -426,9 +544,15 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr planen")
         if (recipe_id is None) == (text is None):
             raise vol.Invalid("exactly one of recipe_id or text is required")
+        sides = list(dict.fromkeys(side_ids or []))
+        if sides and recipe_id is None:
+            raise MealPlannerError(
+                "sides_need_recipe", "Beilagen lassen sich nur an ein Rezept hängen"
+            )
         if recipe_id is not None:
             if recipe_id not in self.recipes.data:
                 raise MealPlannerError("not_found", "Rezept nicht gefunden")
+            self._check_sides(recipe_id, sides)
             if any(e.get("recipe_id") == recipe_id for e in self.plan.get_by_date(day)):
                 return None
         return await self.plan.async_create_item(
@@ -438,6 +562,7 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "recipe_id": recipe_id,
                 "text": text,
                 "portions": portions,
+                "side_ids": sides,
             }
         )
 
@@ -448,9 +573,15 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         recipe_id: str | None = None,
         text: str | None = None,
         portions: int | None = None,
+        side_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Add a dish (recipe or free text) to a day; a day may hold several."""
-        entry = await self._async_add_meal(date, recipe_id=recipe_id, text=text, portions=portions)
+        """Add a dish (recipe or free text) to a day; a day may hold several.
+
+        ``side_ids`` hang side dishes at a recipe dish; they follow its portions.
+        """
+        entry = await self._async_add_meal(
+            date, recipe_id=recipe_id, text=text, portions=portions, side_ids=side_ids
+        )
         if entry is None:
             raise MealPlannerError("recipe_already_planned", "Das Rezept steht an diesem Tag bereits im Plan")
         await self.async_refresh()
@@ -476,6 +607,22 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if entry["date"] < self.today().isoformat():
             raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr ändern")
         await self.plan.async_update_item(entry_id, {"portions": portions})
+        await self.async_refresh()
+
+    async def async_set_sides(self, entry_id: str, side_ids: list[str]) -> None:
+        """Replace the side dishes of a recipe dish (``[]`` removes them all)."""
+        entry = self.plan.data.get(entry_id)
+        if entry is None:
+            raise MealPlannerError("not_found", "Eintrag nicht gefunden")
+        if entry["kind"] != PLAN_KIND_RECIPE:
+            raise MealPlannerError(
+                "sides_need_recipe", "Beilagen lassen sich nur an ein Rezept hängen"
+            )
+        if entry["date"] < self.today().isoformat():
+            raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr ändern")
+        sides = list(dict.fromkeys(side_ids))
+        self._check_sides(entry["recipe_id"], sides)
+        await self.plan.async_update_item(entry_id, {"side_ids": sides})
         await self.async_refresh()
 
     async def async_remove_recipe_from_day(self, date: str, recipe_id: str) -> None:
@@ -536,6 +683,11 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 view = self._entry_view(entry)
                 recipe = self.recipes.data.get(entry.get("recipe_id") or "")
                 view["name"] = recipe["name"] if recipe else entry.get("text")
+                view["sides"] = [
+                    self.recipes.data[sid]["name"]
+                    for sid in view["side_ids"]
+                    if sid in self.recipes.data
+                ]
                 meals.append(view)
             days.append({"date": day, "meals": meals})
         return days
@@ -558,6 +710,11 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         planned within the window or listed in ``exclude_recipe_ids`` (the card
         passes the proposals it currently shows). Days for which no recipe is
         left are returned as ``unfilled``.
+
+        Only main dishes are proposed. To each proposal one of the side dishes
+        deposited at the recipe is added (the one planned longest ago; a side
+        dish already proposed for another day is only reused when no other is
+        left); a recipe without deposited side dishes is proposed alone.
         """
         today = self.today()
         window_end = today + timedelta(days=self.horizon_days - 1)
@@ -574,26 +731,55 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raise MealPlannerError(
                     "date_in_past", "Für vergangene Tage gibt es keine Vorschläge"
                 )
-        blocked = {
-            e["recipe_id"]
-            for e in self.plan.data.values()
-            if e["kind"] == PLAN_KIND_RECIPE and window[0] <= e["date"] <= window[-1]
-        }
+        blocked: set[str] = set()
+        for e in self.plan.data.values():
+            if e["kind"] == PLAN_KIND_RECIPE and window[0] <= e["date"] <= window[-1]:
+                blocked.add(e["recipe_id"])
+                blocked.update(e.get("side_ids", []))
         blocked.update(exclude_recipe_ids or [])
-        candidates = [r for r in self.recipes.data.values() if r["id"] not in blocked]
+        candidates = [
+            r
+            for r in self.recipes.data.values()
+            if r["id"] not in blocked and ROLE_MAIN in recipe_roles(r)
+        ]
         random.shuffle(candidates)  # random tie-break; sort() below is stable
         candidates.sort(key=lambda r: r.get("last_planned") or "")
         suggestions = []
         unfilled = []
+        used_sides: set[str] = set()
         for day in targets:
             if candidates:
                 recipe = candidates.pop(0)
+                sides = self._pick_side(recipe, used_sides)
+                used_sides.update(side["id"] for side in sides)
                 suggestions.append(
-                    {"date": day, "recipe_id": recipe["id"], "recipe_name": recipe["name"]}
+                    {
+                        "date": day,
+                        "recipe_id": recipe["id"],
+                        "recipe_name": recipe["name"],
+                        "side_ids": [side["id"] for side in sides],
+                        "side_names": [side["name"] for side in sides],
+                    }
                 )
             else:
                 unfilled.append(day)
         return {"suggestions": suggestions, "unfilled": unfilled}
+
+    def _pick_side(self, recipe: dict[str, Any], used: set[str]) -> list[dict[str, Any]]:
+        """One of the side dishes deposited at ``recipe`` (longest not planned first)."""
+        options = [
+            side
+            for side_id in recipe.get("side_ids", [])
+            if (side := self.recipes.data.get(side_id)) is not None
+            and ROLE_SIDE in recipe_roles(side)
+        ]
+        if not options:
+            return []
+        fresh = [side for side in options if side["id"] not in used]
+        pool = fresh or options
+        random.shuffle(pool)  # random tie-break; sort() below is stable
+        pool.sort(key=lambda side: side.get("last_planned") or "")
+        return [pool[0]]
 
     async def async_apply_suggestions(self, suggestions: list[dict[str, Any]]) -> dict[str, int]:
         """Write confirmed suggestions into the plan (a recipe already on its day is skipped)."""
@@ -603,10 +789,14 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr planen")
             if item["recipe_id"] not in self.recipes.data:
                 raise MealPlannerError("not_found", "Rezept nicht gefunden")
+            self._check_sides(item["recipe_id"], list(item.get("side_ids") or []))
         added = skipped = 0
         for item in suggestions:
             entry = await self._async_add_meal(
-                item["date"], recipe_id=item["recipe_id"], portions=item.get("portions")
+                item["date"],
+                recipe_id=item["recipe_id"],
+                portions=item.get("portions"),
+                side_ids=item.get("side_ids"),
             )
             if entry is None:
                 skipped += 1
@@ -673,6 +863,12 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for entry in self.plan.get_by_date(day):
             recipe = self.recipes.data.get(entry["recipe_id"]) if entry.get("recipe_id") else None
             shopping.add_into(total, shopping.needed_for_entry(entry, recipe, self.household_size))
+            # Side dishes follow the portions of the entry they hang at.
+            for side_id in entry.get("side_ids", []):
+                side = self.recipes.data.get(side_id)
+                shopping.add_into(
+                    total, shopping.needed_for_entry(entry, side, self.household_size)
+                )
         return total
 
     def _transferred_on(self, day: str) -> shopping.Amounts:

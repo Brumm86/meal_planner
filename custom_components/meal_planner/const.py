@@ -50,6 +50,11 @@ UNITS: Final[dict[str, tuple[str, float]]] = {
     "Prise": ("pinch", 1.0),
 }
 
+# Recipe roles: a recipe can be a main dish, a side dish, or both.
+ROLE_MAIN: Final = "main"
+ROLE_SIDE: Final = "side"
+ROLES: Final = (ROLE_MAIN, ROLE_SIDE)
+
 # Plan entry kinds
 PLAN_KIND_RECIPE: Final = "recipe"
 PLAN_KIND_TEXT: Final = "text"

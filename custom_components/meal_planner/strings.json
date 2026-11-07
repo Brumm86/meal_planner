@@ -33,6 +33,14 @@
       }
     }
   },
+  "selector": {
+    "recipe_roles": {
+      "options": {
+        "main": "Main dish",
+        "side": "Side dish"
+      }
+    }
+  },
   "services": {
     "transfer_to_bring": {
       "name": "Transfer to Bring",
@@ -50,7 +58,7 @@
     },
     "add_meal": {
       "name": "Add meal",
-      "description": "Adds a dish (recipe or free text) to a day. A day can hold several dishes.",
+      "description": "Adds a dish to a day (recipe or free text). A day can hold several dishes; side dishes can be attached to a recipe.",
       "fields": {
         "date": {
           "name": "Day",
@@ -67,6 +75,10 @@
         "portions": {
           "name": "Portions",
           "description": "Number of portions (default: household size). Recipes only."
+        },
+        "sides": {
+          "name": "Side dishes",
+          "description": "Side dishes (recipe names or IDs) that go with the recipe; they follow its portions. Only for recipes; each must be marked as side dish."
         }
       }
     },
@@ -100,7 +112,7 @@
     },
     "get_plan": {
       "name": "Get plan",
-      "description": "Returns the plan for a range, per day with all dishes.",
+      "description": "Returns the plan for a range, per day with all dishes and their side dishes.",
       "fields": {
         "start_date": {
           "name": "From",
@@ -114,7 +126,7 @@
     },
     "suggest_meals": {
       "name": "Suggest meals",
-      "description": "Suggests recipes from the existing ones, by default for the days of the plan window without a dish. Recipes not planned for the longest time come first. Nothing is stored; use \"Apply suggestions\" to put them into the plan.",
+      "description": "Suggests main dishes from the existing recipes, by default for the days of the plan window without a dish. Recipes not planned for the longest time come first; one of the side dishes deposited at the recipe is added. Nothing is stored; use \"Apply suggestions\" to put them into the plan.",
       "fields": {
         "dates": {
           "name": "Days",
@@ -132,7 +144,7 @@
       "fields": {
         "suggestions": {
           "name": "Suggestions",
-          "description": "List of entries with date, recipe (name or ID) and optionally portions."
+          "description": "List of entries with date, recipe (name or ID) and optionally portions and sides (names or IDs)."
         }
       }
     },
@@ -167,12 +179,20 @@
         "ingredients": {
           "name": "Ingredients",
           "description": "List of entries with name and optionally amount and unit (g, kg, ml, l, Stück, EL, TL, Bund, Packung, Dose, Zehe, Prise)."
+        },
+        "roles": {
+          "name": "Roles",
+          "description": "Whether the recipe is a main dish, a side dish or both (default: main dish)."
+        },
+        "sides": {
+          "name": "Side dishes",
+          "description": "Side dishes (recipe names or IDs) that go with this recipe. Only for main dishes; each must be marked as side dish."
         }
       }
     },
     "delete_recipe": {
       "name": "Delete recipe",
-      "description": "Deletes a recipe unless it is still planned today or later.",
+      "description": "Deletes a recipe unless it is still planned today or later (as main or side dish).",
       "fields": {
         "recipe": {
           "name": "Recipe",

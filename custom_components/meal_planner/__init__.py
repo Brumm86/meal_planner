@@ -30,6 +30,7 @@ from .const import (
     SERVICE_REMOVE_MEAL,
     SERVICE_SUGGEST_MEALS,
     SERVICE_TRANSFER_TO_BRING,
+    ROLES,
     UNITS,
 )
 from .coordinator import MealPlannerCoordinator, MealPlannerError
@@ -59,6 +60,7 @@ SERVICE_ADD_MEAL_SCHEMA = vol.All(
             vol.Optional("recipe"): cv.string,
             vol.Optional("text"): cv.string,
             vol.Optional("portions"): _PORTIONS,
+            vol.Optional("sides"): vol.All(cv.ensure_list, [cv.string]),
         }
     ),
     cv.has_at_least_one_key("recipe", "text"),
@@ -91,6 +93,7 @@ SERVICE_APPLY_SUGGESTIONS_SCHEMA = vol.Schema(
                     vol.Required("date"): cv.date,
                     vol.Required("recipe"): cv.string,
                     vol.Optional("portions"): _PORTIONS,
+                    vol.Optional("sides"): vol.All(cv.ensure_list, [cv.string]),
                 }
             )
         ]
@@ -102,6 +105,8 @@ SERVICE_CREATE_RECIPE_SCHEMA = vol.Schema(
         vol.Optional("base_portions"): _PORTIONS,
         vol.Optional("duration_min"): vol.Coerce(int),
         vol.Optional("tags"): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional("roles"): vol.All(cv.ensure_list, vol.Length(min=1), [vol.In(list(ROLES))]),
+        vol.Optional("sides"): vol.All(cv.ensure_list, [cv.string]),
         vol.Optional("notes"): cv.string,
         vol.Optional("instructions"): cv.string,
         vol.Optional("ingredients", default=list): [
@@ -164,6 +169,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             recipe_id=recipe_id,
             text=text or None,
             portions=call.data.get("portions"),
+            side_ids=[c.find_recipe(ref)["id"] for ref in call.data.get("sides", [])],
         )
         return {"id": entry["id"]}
 
@@ -194,6 +200,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     "date": _iso(item["date"]),
                     "recipe_id": c.find_recipe(item["recipe"])["id"],
                     "portions": item.get("portions"),
+                    "side_ids": [c.find_recipe(ref)["id"] for ref in item.get("sides", [])],
                 }
                 for item in call.data["suggestions"]
             ]
@@ -202,6 +209,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def create_recipe(c: MealPlannerCoordinator, call: ServiceCall) -> dict[str, Any]:
         data = dict(call.data)
         data.setdefault("base_portions", c.household_size)
+        if "sides" in data:
+            data["side_ids"] = [c.find_recipe(ref)["id"] for ref in data.pop("sides")]
         return await c.async_create_recipe_by_names(data)
 
     async def delete_recipe(c: MealPlannerCoordinator, call: ServiceCall) -> None:

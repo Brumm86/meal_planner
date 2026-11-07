@@ -32,6 +32,11 @@ add_meal:
           min: 1
           max: 50
           mode: box
+    sides:
+      required: false
+      example: '["Kartoffelgratin"]'
+      selector:
+        object:
 
 remove_meal:
   fields:
@@ -85,7 +90,7 @@ apply_suggestions:
   fields:
     suggestions:
       required: true
-      example: '[{"date": "2026-11-09", "recipe": "Gulasch"}]'
+      example: '[{"date": "2026-11-09", "recipe": "Schnitzel", "sides": ["Kartoffelgratin"]}]'
       selector:
         object:
 
@@ -113,6 +118,21 @@ create_recipe:
     tags:
       required: false
       example: '["schnell", "vegetarisch"]'
+      selector:
+        object:
+    roles:
+      required: false
+      example: '["side"]'
+      selector:
+        select:
+          multiple: true
+          translation_key: recipe_roles
+          options:
+            - main
+            - side
+    sides:
+      required: false
+      example: '["Kartoffelgratin"]'
       selector:
         object:
     notes:

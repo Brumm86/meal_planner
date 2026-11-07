@@ -5,6 +5,8 @@
  * "Zutaten" (the ingredient catalog) and "Einkauf" (editable shopping preview
  * that is handed over to Bring). Recipes only reference catalog
  * ingredients (searchable dropdown), so one product exists exactly once.
+ * A recipe can be a main dish, a side dish or both; a main dish lists the
+ * side dishes that go with it, which can be hung at its plan entry.
  *
  * Deliberately a plain script: NO import/export statements and no syntax newer
  * than what older WebViews accept (no optional chaining, class fields, ...).
@@ -18,7 +20,7 @@
 (function () {
   "use strict";
 
-  var CARD_VERSION = "0.4.0";
+  var CARD_VERSION = "0.5.0";
   var QUICK_TEXTS = ["Reste", "Auswärts", "Bestellen"];
 
   function esc(value) {
@@ -60,6 +62,10 @@
 
   function daysBetween(fromIso, toIso) {
     return Math.round((parseISO(toIso) - parseISO(fromIso)) / 86400000);
+  }
+
+  function hasRole(recipe, role) {
+    return !!recipe && (recipe.roles || ["main"]).indexOf(role) >= 0;
   }
 
   function parseAmount(text) {
@@ -110,6 +116,10 @@
     ".portions{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--divider-color);border-radius:16px;padding:0 4px}" +
     ".portions.custom{border-color:var(--primary-color);color:var(--primary-color)}" +
     ".portions button{background:none;border:none;color:inherit;padding:2px 6px;font-size:1.1em}" +
+    ".day .sides{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;font-size:.9em}" +
+    ".day .sides .chip{margin:0}" +
+    "label.check{display:flex;align-items:center;gap:8px;margin:4px 0;cursor:pointer}" +
+    "label.check input{width:18px;height:18px;margin:0}" +
     ".chip{display:inline-block;background:var(--secondary-background-color);border-radius:12px;padding:2px 10px;margin:0 4px 4px 0;font-size:.85em;border:none;color:var(--primary-text-color)}" +
     "button.chip{cursor:pointer}" +
     ".chip.on{background:var(--primary-color);color:var(--text-primary-color,#fff)}" +
@@ -386,6 +396,7 @@
                 "<span>" + portions + " 👤</span>" +
                 '<button data-action="portions" data-entry="' + esc(entry.id) + '" data-delta="1">+</button></span>' +
                 self._mealRemove(entry) + "</div>";
+              html += self._renderSides(entry, recipe);
             }
             html += "</div>";
           });
@@ -396,6 +407,23 @@
         html += "</div></div>";
       }
       return html;
+    }
+
+    // Side dishes of a recipe entry: toggle chips for the side dishes deposited at
+    // the recipe (on = hangs at this entry); ones attached by other means stay visible.
+    _renderSides(entry, recipe) {
+      var self = this;
+      var attached = entry.side_ids || [];
+      var offered = ((recipe && recipe.side_ids) || []).filter(function (id) { return self._recipe(id); });
+      var ids = offered.slice();
+      attached.forEach(function (id) { if (ids.indexOf(id) < 0 && self._recipe(id)) ids.push(id); });
+      if (!ids.length) return "";
+      var html = '<div class="sides"><span class="muted">Beilagen:</span>';
+      ids.forEach(function (id) {
+        var on = attached.indexOf(id) >= 0;
+        html += '<button class="chip' + (on ? " on" : "") + '" data-action="toggle-side" data-entry="' + esc(entry.id) + '" data-side="' + esc(id) + '" title="' + (on ? "Beilage entfernen" : "Beilage dazu") + '">' + (on ? "✓ " : "+ ") + esc(self._recipe(id).name) + "</button>";
+      });
+      return html + "</div>";
     }
 
     _mealRemove(entry) {
@@ -425,7 +453,7 @@
         g.items.forEach(function (item) {
           var r = self._recipe(item.recipe_id);
           html +=
-            '<div class="srow2"><div class="info"><div><b>' + esc(dayLabel(item.date)) + "</b> · " + esc(r ? r.name : item.recipe_name) + "</div>" +
+            '<div class="srow2"><div class="info"><div><b>' + esc(dayLabel(item.date)) + "</b> · " + esc(r ? r.name : item.recipe_name) + ((item.side_names || []).length ? " mit " + esc(item.side_names.join(", ")) : "") + "</div>" +
             '<div class="sub">' + (r ? esc(self._lastPlannedText(r)) + (r.duration_min ? " · " + r.duration_min + " min" : "") : "") + "</div></div>" +
             '<button class="iconbtn" title="Neuer Vorschlag" data-action="suggest-reroll" data-date="' + item.date + '">🎲</button>' +
             '<button class="iconbtn" title="Ablehnen" data-action="suggest-reject" data-date="' + item.date + '">✕</button>' +
@@ -496,7 +524,7 @@
       var g = this._sugg;
       var chosen = g.items.filter(function (item) { return dates.indexOf(item.date) >= 0; });
       if (!chosen.length) return;
-      var payload = chosen.map(function (item) { return { date: item.date, recipe_id: item.recipe_id }; });
+      var payload = chosen.map(function (item) { return { date: item.date, recipe_id: item.recipe_id, side_ids: item.side_ids || [] }; });
       this._call({ type: "meal_planner/plan/apply_suggestions", suggestions: payload }).then(function () {
         g.items = g.items.filter(function (item) { return dates.indexOf(item.date) < 0; });
         g.message = "";
@@ -509,7 +537,7 @@
       var p = this._picker;
       var snap = this._snap;
       var onDay = (snap.plan[p.date] || []).map(function (e) { return e.recipe_id; });
-      var recipes = snap.recipes.filter(function (r) { return onDay.indexOf(r.id) < 0; });
+      var recipes = snap.recipes.filter(function (r) { return onDay.indexOf(r.id) < 0 && hasRole(r, "main"); });
       var q = fold(p.search || "");
       recipes = recipes.filter(function (r) {
         if (p.tag && r.tags.indexOf(p.tag) < 0) return false;
@@ -772,13 +800,19 @@
       list.forEach(function (r) {
         left +=
           '<button class="ritem' + (r.id === self._selectedId && !self._editor ? " sel" : "") + '" data-action="select-recipe" data-recipe="' + esc(r.id) + '"><div>' + esc(r.name) + "</div>" +
-          '<div class="sub">' + r.ingredients.length + " Zutaten · " + esc(self._lastPlannedText(r)) + "</div></button>";
+          '<div class="sub">' + r.ingredients.length + " Zutaten · " + esc(self._lastPlannedText(r)) + esc(self._roleHint(r)) + "</div></button>";
       });
       left += "</div></div>";
       var right = '<div class="muted">Rezept wählen oder neu anlegen.</div>';
       if (this._editor) right = this._renderEditor();
       else if (this._selectedId && this._recipe(this._selectedId)) right = this._renderRecipeView(this._recipe(this._selectedId));
       return '<div class="split">' + left + "<div>" + right + "</div></div>";
+    }
+
+    // Only the exception is named: plain main dishes need no label.
+    _roleHint(r) {
+      if (hasRole(r, "side")) return hasRole(r, "main") ? " · auch Beilage" : " · Beilage";
+      return "";
     }
 
     _lineText(line) {
@@ -792,7 +826,10 @@
       var self = this;
       var html = '<div class="toolbar"><h3 style="margin:0;flex:1">' + esc(r.name) + '</h3><button class="btn secondary" data-action="edit-recipe">Bearbeiten</button></div>';
       html += '<div class="muted" style="margin-bottom:8px">' + r.base_portions + " Portionen" + (r.duration_min ? " · " + r.duration_min + " min" : "") + " · " + esc(this._lastPlannedText(r)) + "</div>";
-      if (r.tags.length) html += "<div>" + r.tags.map(function (t) { return '<span class="chip">' + esc(t) + "</span>"; }).join("") + "</div>";
+      var roleChips = (hasRole(r, "main") ? '<span class="chip">Hauptgericht</span>' : "") + (hasRole(r, "side") ? '<span class="chip">Beilage</span>' : "");
+      html += "<div>" + roleChips + r.tags.map(function (t) { return '<span class="chip">' + esc(t) + "</span>"; }).join("") + "</div>";
+      var sideNames = (r.side_ids || []).map(function (id) { var o = self._recipe(id); return o ? o.name : null; }).filter(function (n) { return n; });
+      if (sideNames.length) html += '<div class="muted" style="margin:4px 0 8px">Passende Beilagen: ' + esc(sideNames.join(", ")) + "</div>";
       html += "<h4>Zutaten</h4>";
       html += r.ingredients.length ? '<ul class="lines">' + r.ingredients.map(function (l) { return "<li>" + esc(self._lineText(l)) + "</li>"; }).join("") + "</ul>" : '<div class="muted">Keine Zutaten.</div>';
       if (r.instructions) html += '<h4>Zubereitung</h4><pre class="text">' + esc(r.instructions) + "</pre>";
@@ -801,7 +838,7 @@
     }
 
     _newDraft() {
-      return { name: "", base_portions: this._snap.settings.household_size, duration_min: "", tags: "", notes: "", instructions: "", last_planned: "", ingredients: [this._emptyLine()] };
+      return { name: "", base_portions: this._snap.settings.household_size, duration_min: "", tags: "", notes: "", instructions: "", last_planned: "", roles: ["main"], side_ids: [], ingredients: [this._emptyLine()] };
     }
 
     _emptyLine() {
@@ -818,6 +855,8 @@
         notes: r.notes,
         instructions: r.instructions,
         last_planned: r.last_planned || "",
+        roles: (r.roles || ["main"]).slice(),
+        side_ids: (r.side_ids || []).slice(),
         ingredients: r.ingredients.map(function (l) {
           var ing = self._ingredient(l.ingredient_id);
           return { ingredient_id: l.ingredient_id, name: ing ? ing.name : "", amount: formatAmount(l.amount), unit: l.unit || "", touched: true };
@@ -841,6 +880,20 @@
         '<label class="field"><span>Dauer (Minuten)</span><input data-f="duration_min" inputmode="numeric" value="' + esc(d.duration_min) + '" /></label></div>';
       html += '<label class="field"><span>Tags (kommagetrennt)</span><input data-f="tags" style="width:100%" value="' + esc(d.tags) + '" /></label>';
       if (this._snap.tags.length) html += "<div style=\"margin:-4px 0 10px\">" + this._snap.tags.map(function (t) { return '<button class="chip" data-action="add-tag" data-tag="' + esc(t) + '">+ ' + esc(t) + "</button>"; }).join("") + "</div>";
+      html += '<div class="field" style="margin-bottom:10px"><span class="muted" style="display:block;font-size:.85em;margin-bottom:3px">Rolle</span>' +
+        '<label class="check"><input type="checkbox" data-role="main" data-action="toggle-role"' + (d.roles.indexOf("main") >= 0 ? " checked" : "") + " /> Hauptgericht</label>" +
+        '<label class="check"><input type="checkbox" data-role="side" data-action="toggle-role"' + (d.roles.indexOf("side") >= 0 ? " checked" : "") + " /> Beilage</label></div>";
+      if (d.roles.indexOf("main") >= 0) {
+        var sideOptions = this._snap.recipes.filter(function (r) { return hasRole(r, "side") && r.id !== self._editor.id; });
+        html += '<div class="field sidelist" style="margin-bottom:10px"><span class="muted" style="display:block;font-size:.85em;margin-bottom:3px">Passende Beilagen</span>';
+        if (!sideOptions.length) {
+          html += '<div class="muted" style="font-size:.9em">Noch keine Beilagen – Rezepte mit der Rolle „Beilage“ erscheinen hier.</div>';
+        }
+        sideOptions.forEach(function (r) {
+          html += '<label class="check"><input type="checkbox" data-side="' + esc(r.id) + '"' + (d.side_ids.indexOf(r.id) >= 0 ? " checked" : "") + " /> " + esc(r.name) + "</label>";
+        });
+        html += "</div>";
+      }
       html += "<h4 style=\"margin:8px 0 6px\">Zutaten <span class=\"muted\" style=\"font-weight:400\">(für " + esc(d.base_portions || "?") + " Portionen)</span></h4>";
       d.ingredients.forEach(function (line, i) {
         var chosen = line.ingredient_id ? self._ingredient(line.ingredient_id) : null;
@@ -883,6 +936,19 @@
         });
       }
       d.ingredients = lines;
+      var roleBoxes = root.querySelectorAll("[data-role]");
+      if (roleBoxes.length) {
+        var roles = [];
+        for (var k = 0; k < roleBoxes.length; k++) if (roleBoxes[k].checked) roles.push(roleBoxes[k].getAttribute("data-role"));
+        d.roles = roles;
+      }
+      // The side list is only shown for main dishes; a hidden list keeps its old choice.
+      if (root.querySelector(".sidelist")) {
+        var sideBoxes = root.querySelectorAll("[data-side]");
+        var sides = [];
+        for (var m = 0; m < sideBoxes.length; m++) if (sideBoxes[m].checked) sides.push(sideBoxes[m].getAttribute("data-side"));
+        d.side_ids = sides;
+      }
     }
 
     _buildRecipePayload() {
@@ -915,8 +981,13 @@
         if (amount === null && unit) throw new Error("Zutat „" + lname + "“: Menge fehlt.");
         lines.push({ ingredient_id: chosen.id, amount: amount, unit: unit });
       }
+      if (!d.roles.length) throw new Error("Bitte mindestens eine Rolle wählen (Hauptgericht und/oder Beilage).");
+      var isMain = d.roles.indexOf("main") >= 0;
+      var self = this;
       var payload = {
         name: name,
+        roles: d.roles,
+        side_ids: isMain ? d.side_ids.filter(function (id) { return hasRole(self._recipe(id), "side"); }) : [],
         base_portions: portions,
         duration_min: duration,
         tags: String(d.tags || "").split(",").map(function (t) { return t.trim(); }).filter(function (t) { return t; }),
@@ -1225,6 +1296,21 @@
           this._call({ type: "meal_planner/plan/portions", entry_id: entry.id, portions: override }).catch(function () {});
           break;
         }
+        case "toggle-side": {
+          var sentry = this._findEntry(el.getAttribute("data-entry"));
+          if (!sentry) break;
+          var sid = el.getAttribute("data-side");
+          var sides = (sentry.side_ids || []).slice();
+          var at = sides.indexOf(sid);
+          if (at >= 0) sides.splice(at, 1);
+          else sides.push(sid);
+          this._call({ type: "meal_planner/plan/sides", entry_id: sentry.id, side_ids: sides }).catch(function () {});
+          break;
+        }
+        case "toggle-role":
+          this._syncDraft();
+          this._render();
+          break;
         case "suggest-open":
           this._suggestOpen();
           break;

@@ -8,7 +8,8 @@ Each collection owns one ``Store`` file:
 * ``meal_planner.ingredients`` - ingredient catalog (the only place ingredient
   names live; recipes reference it by id, so one product = one entry)
 * ``meal_planner.plan``        - plan entries; a day may hold several (each a
-  recipe or free text), every entry has its own generated id
+  recipe or free text), every entry has its own generated id; a recipe entry
+  may carry ``side_ids`` (side dishes that follow its portions)
 * ``meal_planner.transfers``   - per day: what has already been handed to Bring
 
 Only schema validation and uniqueness rules live here; the cross-collection
@@ -30,6 +31,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import slugify
 
 from .const import (
+    ROLE_MAIN,
+    ROLES,
     PLAN_KIND_RECIPE,
     PLAN_KIND_TEXT,
     STORAGE_KEY_INGREDIENTS,
@@ -134,6 +137,16 @@ def _normalise_tags(tags: list[str]) -> list[str]:
     return result
 
 
+def _normalise_roles(roles: list[str]) -> list[str]:
+    """Drop duplicates, keep the canonical order (main before side)."""
+    return [role for role in ROLES if role in roles]
+
+
+def _unique_ids(ids: list[str]) -> list[str]:
+    """Drop duplicate ids, keep the first occurrence (order matters for display)."""
+    return list(dict.fromkeys(ids))
+
+
 _RECIPE_FIELDS: dict[str, Any] = {
     "name": _clean_str(120, min_len=1),
     "base_portions": vol.All(vol.Coerce(int), vol.Range(min=1, max=50)),
@@ -143,6 +156,11 @@ _RECIPE_FIELDS: dict[str, Any] = {
     "duration_min": vol.Any(None, vol.All(vol.Coerce(int), vol.Range(min=1, max=1440))),
     "tags": vol.All([_clean_str(40)], _normalise_tags),
     "last_planned": vol.Any(None, iso_date),
+    # Main dish, side dish or both; at least one. Recipes stored before 0.5.0
+    # have no "roles" and count as main dishes (see ``recipe_roles``).
+    "roles": vol.All([vol.In(list(ROLES))], vol.Length(min=1), _normalise_roles),
+    # Side dishes that go with this recipe (recipe ids; only for main dishes).
+    "side_ids": vol.All([str], _unique_ids),
 }
 
 RECIPE_CREATE_SCHEMA = vol.Schema(
@@ -155,6 +173,8 @@ RECIPE_CREATE_SCHEMA = vol.Schema(
         vol.Optional("duration_min", default=None): _RECIPE_FIELDS["duration_min"],
         vol.Optional("tags", default=list): _RECIPE_FIELDS["tags"],
         vol.Optional("last_planned", default=None): _RECIPE_FIELDS["last_planned"],
+        vol.Optional("roles", default=lambda: [ROLE_MAIN]): _RECIPE_FIELDS["roles"],
+        vol.Optional("side_ids", default=list): _RECIPE_FIELDS["side_ids"],
     }
 )
 RECIPE_UPDATE_SCHEMA = vol.Schema({vol.Optional(k): v for k, v in _RECIPE_FIELDS.items()})
@@ -182,6 +202,7 @@ def _validate_plan_item(item: dict[str, Any]) -> dict[str, Any]:
         if not item.get("text") or item.get("recipe_id"):
             raise vol.Invalid("a text entry needs text and no recipe_id")
         item["portions"] = None  # free text has no ingredients to scale
+        item["side_ids"] = []  # ...and no side dishes
     return item
 
 
@@ -194,6 +215,8 @@ _PLAN_FIELDS: dict[str, Any] = {
     # Set by the coordinator once the day has passed and the recipe's
     # "last_planned" was bumped; guards against re-applying after a manual fix.
     "counted": bool,
+    # Side dishes hanging at this (recipe) entry; they follow its portions.
+    "side_ids": vol.All([str], _unique_ids),
 }
 
 PLAN_CREATE_SCHEMA = vol.All(
@@ -205,6 +228,7 @@ PLAN_CREATE_SCHEMA = vol.All(
             vol.Optional("text", default=None): _PLAN_FIELDS["text"],
             vol.Optional("portions", default=None): _PLAN_FIELDS["portions"],
             vol.Optional("counted", default=False): _PLAN_FIELDS["counted"],
+            vol.Optional("side_ids", default=list): _PLAN_FIELDS["side_ids"],
         }
     ),
     _validate_plan_item,
