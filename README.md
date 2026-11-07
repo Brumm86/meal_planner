@@ -2,11 +2,12 @@
 
 Home-Assistant-Integration zur Planung des Mittagessens: Rezepte mit strukturierten Zutaten, ein fortlaufender Speiseplan und eine Einkaufsliste mit Übergabe an Bring.
 
-## Stand: v0.6.0
+## Stand: v0.7.0
 
 - Rezepte (Name, Basisportionen, Zutaten, Dauer, Tags, Zubereitung, Notiz/Link, „zuletzt geplant“)
 - **Rolle und Beilagen:** Jedes Rezept ist Hauptgericht, Beilage oder beides. An einem Hauptgericht werden die **passenden Beilagen** hinterlegt (z. B. beim Schnitzel Kartoffelgratin, Spätzle, Gemüse). Im Plan hängen sie als Beilage am Eintrag des Hauptgerichts: gemeinsam angezeigt, gemeinsam gelöscht, die Personenzahl folgt dem Hauptgericht; ihre Zutaten laufen in die Einkaufsliste. Im Plan werden nur die hinterlegten Beilagen angeboten. Es gibt keine verschachtelten Rezepte – Haupt- und Beilage bleiben eigene, flache Rezepte. Bestehende Rezepte gelten als Hauptgericht.
 - **Tage verschieben (Drag and Drop):** Am Griff ⠿ vor dem Datum lässt sich ein ganzer Tag auf einen anderen ziehen (Maus und Touch). Die Tage werden komplett getauscht – alle Gerichte samt Beilagen und Portionen wechseln; ein leerer Zieltag übernimmt sie einfach. Das geht auch im Planungsfenster mit den Vorschlägen. Vergangene Tage bleiben unverändert. Websocket: `meal_planner/plan/move_day` (`from_date`, `to_date`).
+- **Vorgekocht:** Ein Rezept-Gericht lässt sich im Plan über „🍲 vorgekocht“ (und im Vorschlagsfenster vor dem Übernehmen) kennzeichnen. Ein vorgekochtes Gericht samt seinen Beilagen setzt **keine Zutaten** auf die Einkaufsliste; es bleibt im Plan und in `get_plan` (`precooked`) und zählt für „zuletzt geplant“ wie jedes andere. Was schon an Bring übergeben wurde, bleibt dort und erscheint in der Einkaufsvorschau als „nicht mehr benötigt“. Vergangene Tage lassen sich nicht mehr ändern. Websocket: `meal_planner/plan/precooked` (`entry_id`, `precooked`).
 - Zutatenkatalog mit Autovervollständigung und fester Einheitenliste (g, kg, ml, l, Stück, EL, TL, Bund, Packung, Dose, Zehe, Prise)
 - Speiseplan als fortlaufender Kalender (Standard: 10 Tage ab heute); **pro Tag beliebig viele Gerichte** (Rezept oder Freitext wie „Reste“, „Auswärts“), Personenzahl pro Gericht überschreibbar; ein Rezept steht pro Tag höchstens einmal
 - **Einkauf:** Vorschau für einen wählbaren Zeitraum, Mengen skaliert auf die Portionen und zusammengerechnet (g/kg und ml/l werden umgerechnet). Positionen lassen sich abhaken, in der Menge ändern und um eigene Einträge ergänzen; diese Änderungen gelten nur für den einen Einkauf.
@@ -23,12 +24,13 @@ Rezepte werden in den Aktionen über **Name oder ID** angegeben. Aktionen mit An
 
 | Aktion | Zweck | Felder (Pflicht fett) | Antwort |
 |---|---|---|---|
-| `meal_planner.add_meal` | Gericht zu einem Tag hinzufügen | **`date`**, `recipe` *oder* `text`, `portions`, `sides` (Beilagen, nur mit `recipe`) | `{"id": …}` |
+| `meal_planner.add_meal` | Gericht zu einem Tag hinzufügen | **`date`**, `recipe` *oder* `text`, `portions`, `sides` (Beilagen, nur mit `recipe`), `precooked` (nur mit `recipe`) | `{"id": …}` |
+| `meal_planner.set_precooked` | Gericht eines Tages als vorgekocht kennzeichnen oder die Kennzeichnung aufheben | **`date`**, **`recipe`**, `precooked` (Standard `true`) | – |
 | `meal_planner.remove_meal` | ein Gericht eines Tages entfernen | **`date`**, `recipe` *oder* `text` | – |
 | `meal_planner.clear_day` | alle Gerichte eines Tages entfernen | **`date`** | `{"removed": n}` |
-| `meal_planner.get_plan` | Plan abfragen | `start_date`, `end_date` (Standard: Planfenster) | `{"days": [{"date", "meals": […]}]}` (je Gericht auch `side_ids`, `sides`) |
+| `meal_planner.get_plan` | Plan abfragen | `start_date`, `end_date` (Standard: Planfenster) | `{"days": [{"date", "meals": […]}]}` (je Gericht auch `side_ids`, `sides`, `precooked`) |
 | `meal_planner.suggest_meals` | Vorschläge machen (speichert nichts) | `dates` (nur diese Tage), `exclude_recipes` | `{"suggestions": […], "unfilled": […]}` (je Vorschlag auch `side_ids`, `side_names`) |
-| `meal_planner.apply_suggestions` | Vorschläge in den Plan übernehmen | **`suggestions`**: Liste aus `date`, `recipe`, optional `portions`, `sides` | `{"added": n, "skipped": n}` |
+| `meal_planner.apply_suggestions` | Vorschläge in den Plan übernehmen | **`suggestions`**: Liste aus `date`, `recipe`, optional `portions`, `sides`, `precooked` | `{"added": n, "skipped": n}` |
 | `meal_planner.create_recipe` | Rezept anlegen | **`name`**, `base_portions`, `duration_min`, `tags`, `roles` (`main`, `side`; Standard `main`), `sides` (passende Beilagen), `notes`, `instructions`, `ingredients` (`name`, `amount`, `unit`) | `{"id", "name", "created_ingredients"}` |
 | `meal_planner.delete_recipe` | Rezept löschen (nicht, solange es heute oder später geplant ist) | **`recipe`** | – |
 | `meal_planner.transfer_to_bring` | Einkaufsliste an Bring übergeben | `start_date`, `end_date` | `{"added": n}` |

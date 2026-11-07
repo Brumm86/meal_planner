@@ -174,6 +174,7 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "text": entry.get("text"),
             "portions": entry.get("portions"),
             "side_ids": list(entry.get("side_ids", [])),
+            "precooked": bool(entry.get("precooked", False)),
         }
 
     # --------------------------------------------------------------- snapshot
@@ -537,6 +538,7 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         text: str | None = None,
         portions: int | None = None,
         side_ids: list[str] | None = None,
+        precooked: bool = False,
     ) -> dict[str, Any] | None:
         """Add one entry to a day without refreshing; ``None`` if the recipe is already there."""
         day = iso_date(date)
@@ -548,6 +550,10 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if sides and recipe_id is None:
             raise MealPlannerError(
                 "sides_need_recipe", "Beilagen lassen sich nur an ein Rezept hängen"
+            )
+        if precooked and recipe_id is None:
+            raise MealPlannerError(
+                "not_a_recipe", "Nur Rezepte lassen sich als vorgekocht kennzeichnen"
             )
         if recipe_id is not None:
             if recipe_id not in self.recipes.data:
@@ -563,6 +569,7 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "text": text,
                 "portions": portions,
                 "side_ids": sides,
+                "precooked": bool(precooked),
             }
         )
 
@@ -574,13 +581,21 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         text: str | None = None,
         portions: int | None = None,
         side_ids: list[str] | None = None,
+        precooked: bool = False,
     ) -> dict[str, Any]:
         """Add a dish (recipe or free text) to a day; a day may hold several.
 
         ``side_ids`` hang side dishes at a recipe dish; they follow its portions.
+        ``precooked`` marks a recipe dish as cooked in advance: it (and its side
+        dishes) adds nothing to the shopping list.
         """
         entry = await self._async_add_meal(
-            date, recipe_id=recipe_id, text=text, portions=portions, side_ids=side_ids
+            date,
+            recipe_id=recipe_id,
+            text=text,
+            portions=portions,
+            side_ids=side_ids,
+            precooked=precooked,
         )
         if entry is None:
             raise MealPlannerError("recipe_already_planned", "Das Rezept steht an diesem Tag bereits im Plan")
@@ -608,6 +623,33 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr ändern")
         await self.plan.async_update_item(entry_id, {"portions": portions})
         await self.async_refresh()
+
+    async def async_set_precooked(self, entry_id: str, precooked: bool) -> None:
+        """Mark a recipe dish as precooked (or not): precooked adds no shopping list items.
+
+        What was already handed to Bring stays there (it is never removed); the
+        shopping preview then lists it under "nicht mehr benötigt".
+        """
+        entry = self.plan.data.get(entry_id)
+        if entry is None:
+            raise MealPlannerError("not_found", "Eintrag nicht gefunden")
+        if entry["kind"] != PLAN_KIND_RECIPE:
+            raise MealPlannerError(
+                "not_a_recipe", "Nur Rezepte lassen sich als vorgekocht kennzeichnen"
+            )
+        if entry["date"] < self.today().isoformat():
+            raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr ändern")
+        await self.plan.async_update_item(entry_id, {"precooked": bool(precooked)})
+        await self.async_refresh()
+
+    async def async_set_precooked_on_day(self, date: str, recipe_id: str, precooked: bool) -> None:
+        """Mark the recipe dish of a day as precooked (service convenience, by recipe)."""
+        day = iso_date(date)
+        for entry in self.plan.get_by_date(day):
+            if entry.get("recipe_id") == recipe_id:
+                await self.async_set_precooked(entry["id"], precooked)
+                return
+        raise MealPlannerError("not_found", "Das Rezept steht an diesem Tag nicht im Plan")
 
     async def async_set_sides(self, entry_id: str, side_ids: list[str]) -> None:
         """Replace the side dishes of a recipe dish (``[]`` removes them all)."""
@@ -821,6 +863,7 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 recipe_id=item["recipe_id"],
                 portions=item.get("portions"),
                 side_ids=item.get("side_ids"),
+                precooked=bool(item.get("precooked", False)),
             )
             if entry is None:
                 skipped += 1
@@ -885,6 +928,8 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _needed_on(self, day: str) -> shopping.Amounts:
         total: shopping.Amounts = {}
         for entry in self.plan.get_by_date(day):
+            if entry.get("precooked"):
+                continue  # cooked in advance: nothing to buy for it or its sides
             recipe = self.recipes.data.get(entry["recipe_id"]) if entry.get("recipe_id") else None
             shopping.add_into(total, shopping.needed_for_entry(entry, recipe, self.household_size))
             # Side dishes follow the portions of the entry they hang at.

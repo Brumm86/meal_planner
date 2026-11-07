@@ -37,6 +37,28 @@ add_meal:
       example: '["Kartoffelgratin"]'
       selector:
         object:
+    precooked:
+      required: false
+      default: false
+      selector:
+        boolean:
+
+set_precooked:
+  fields:
+    date:
+      required: true
+      selector:
+        date:
+    recipe:
+      required: true
+      example: "Gulasch"
+      selector:
+        text:
+    precooked:
+      required: false
+      default: true
+      selector:
+        boolean:
 
 remove_meal:
   fields:
@@ -90,7 +112,7 @@ apply_suggestions:
   fields:
     suggestions:
       required: true
-      example: '[{"date": "2026-11-09", "recipe": "Schnitzel", "sides": ["Kartoffelgratin"]}]'
+      example: '[{"date": "2026-11-09", "recipe": "Schnitzel", "sides": ["Kartoffelgratin"], "precooked": false}]'
       selector:
         object:
 

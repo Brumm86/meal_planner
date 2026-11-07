@@ -20,7 +20,7 @@
 (function () {
   "use strict";
 
-  var CARD_VERSION = "0.6.0";
+  var CARD_VERSION = "0.7.0";
   var QUICK_TEXTS = ["Reste", "Auswärts", "Bestellen"];
 
   function esc(value) {
@@ -396,10 +396,12 @@
               var recipe = self._recipe(entry.recipe_id);
               var portions = entry.portions || snap.settings.household_size;
               html += '<div class="meal"><span class="name">' + esc(recipe ? recipe.name : "(Rezept fehlt)") + "</span>";
+              if (entry.precooked) html += ' <span class="muted">· vorgekocht</span>';
               if (recipe && recipe.duration_min) html += ' <span class="muted">· ' + recipe.duration_min + " min</span>";
               html += "</div>";
               html +=
-                '<div class="actions"><span class="portions' + (entry.portions ? " custom" : "") + '" title="Personen">' +
+                '<div class="actions"><button class="chip' + (entry.precooked ? " on" : "") + '" data-action="toggle-precooked" data-entry="' + esc(entry.id) + '" title="' + (entry.precooked ? "Vorgekocht: keine Zutaten auf der Einkaufsliste – zum Aufheben klicken" : "Als vorgekocht kennzeichnen (keine Zutaten auf die Einkaufsliste)") + '">' + (entry.precooked ? "✓ " : "") + "🍲 vorgekocht</button>" +
+                '<span class="portions' + (entry.portions ? " custom" : "") + '" title="Personen">' +
                 '<button data-action="portions" data-entry="' + esc(entry.id) + '" data-delta="-1">−</button>' +
                 "<span>" + portions + " 👤</span>" +
                 '<button data-action="portions" data-entry="' + esc(entry.id) + '" data-delta="1">+</button></span>' +
@@ -546,6 +548,7 @@
           html +=
             '<div class="srow2" data-dropdate="' + item.date + '" data-dropscope="sugg"><span class="grip" data-drag="sugg" data-date="' + item.date + '" title="Vorschlag auf einen anderen Tag ziehen">⠿</span><div class="info"><div><b>' + esc(dayLabel(item.date)) + "</b> · " + esc(r ? r.name : item.recipe_name) + ((item.side_names || []).length ? " mit " + esc(item.side_names.join(", ")) : "") + "</div>" +
             '<div class="sub">' + (r ? esc(self._lastPlannedText(r)) + (r.duration_min ? " · " + r.duration_min + " min" : "") : "") + "</div></div>" +
+            '<button class="chip' + (item.precooked ? " on" : "") + '" data-action="suggest-precooked" data-date="' + item.date + '" title="' + (item.precooked ? "Vorgekocht: keine Zutaten auf der Einkaufsliste – zum Aufheben klicken" : "Als vorgekocht kennzeichnen (keine Zutaten auf die Einkaufsliste)") + '">' + (item.precooked ? "✓ " : "") + "🍲 vorgekocht</button>" +
             '<button class="iconbtn" title="Neuer Vorschlag" data-action="suggest-reroll" data-date="' + item.date + '">🎲</button>' +
             '<button class="iconbtn" title="Ablehnen" data-action="suggest-reject" data-date="' + item.date + '">✕</button>' +
             '<button class="btn small" data-action="suggest-apply" data-date="' + item.date + '">Übernehmen</button></div>';
@@ -599,7 +602,9 @@
             if (item.date !== date) return item;
             found = true;
             g.rejected.push(item.recipe_id);
-            return res.suggestions[0];
+            var fresh = res.suggestions[0];
+            fresh.precooked = !!item.precooked;
+            return fresh;
           });
           if (!found) {
             g.items.push(res.suggestions[0]);
@@ -615,7 +620,7 @@
       var g = this._sugg;
       var chosen = g.items.filter(function (item) { return dates.indexOf(item.date) >= 0; });
       if (!chosen.length) return;
-      var payload = chosen.map(function (item) { return { date: item.date, recipe_id: item.recipe_id, side_ids: item.side_ids || [] }; });
+      var payload = chosen.map(function (item) { return { date: item.date, recipe_id: item.recipe_id, side_ids: item.side_ids || [], precooked: !!item.precooked }; });
       this._call({ type: "meal_planner/plan/apply_suggestions", suggestions: payload }).then(function () {
         g.items = g.items.filter(function (item) { return dates.indexOf(item.date) < 0; });
         g.message = "";
@@ -1385,6 +1390,21 @@
           var next = Math.min(50, Math.max(1, current + Number(el.getAttribute("data-delta"))));
           var override = next === this._snap.settings.household_size ? null : next;
           this._call({ type: "meal_planner/plan/portions", entry_id: entry.id, portions: override }).catch(function () {});
+          break;
+        }
+        case "toggle-precooked": {
+          var pentry = this._findEntry(el.getAttribute("data-entry"));
+          if (!pentry || pentry.kind !== "recipe") break;
+          this._call({ type: "meal_planner/plan/precooked", entry_id: pentry.id, precooked: !pentry.precooked }).catch(function () {});
+          break;
+        }
+        case "suggest-precooked": {
+          var g2 = this._sugg;
+          if (!g2) break;
+          g2.items.forEach(function (item) {
+            if (item.date === date) item.precooked = !item.precooked;
+          });
+          this._render();
           break;
         }
         case "toggle-side": {

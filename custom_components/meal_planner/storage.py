@@ -203,6 +203,7 @@ def _validate_plan_item(item: dict[str, Any]) -> dict[str, Any]:
             raise vol.Invalid("a text entry needs text and no recipe_id")
         item["portions"] = None  # free text has no ingredients to scale
         item["side_ids"] = []  # ...and no side dishes
+        item["precooked"] = False  # ...and nothing that could be precooked
     return item
 
 
@@ -217,6 +218,9 @@ _PLAN_FIELDS: dict[str, Any] = {
     "counted": bool,
     # Side dishes hanging at this (recipe) entry; they follow its portions.
     "side_ids": vol.All([str], _unique_ids),
+    # Cooked in advance: the entry (and its side dishes) adds nothing to the
+    # shopping list. Entries stored before 0.7.0 have no flag = False.
+    "precooked": bool,
 }
 
 PLAN_CREATE_SCHEMA = vol.All(
@@ -229,6 +233,7 @@ PLAN_CREATE_SCHEMA = vol.All(
             vol.Optional("portions", default=None): _PLAN_FIELDS["portions"],
             vol.Optional("counted", default=False): _PLAN_FIELDS["counted"],
             vol.Optional("side_ids", default=list): _PLAN_FIELDS["side_ids"],
+            vol.Optional("precooked", default=False): _PLAN_FIELDS["precooked"],
         }
     ),
     _validate_plan_item,

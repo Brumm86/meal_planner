@@ -79,6 +79,10 @@
         "sides": {
           "name": "Side dishes",
           "description": "Side dishes (recipe names or IDs) that go with the recipe; they follow its portions. Only for recipes; each must be marked as side dish."
+        },
+        "precooked": {
+          "name": "Precooked",
+          "description": "Cooked in advance: the dish adds nothing to the shopping list. Recipes only."
         }
       }
     },
@@ -144,7 +148,7 @@
       "fields": {
         "suggestions": {
           "name": "Suggestions",
-          "description": "List of entries with date, recipe (name or ID) and optionally portions and sides (names or IDs)."
+          "description": "List of entries with date, recipe (name or ID) and optionally portions, sides (names or IDs) and precooked (true/false)."
         }
       }
     },
@@ -197,6 +201,24 @@
         "recipe": {
           "name": "Recipe",
           "description": "Name or ID of the recipe."
+        }
+      }
+    },
+    "set_precooked": {
+      "name": "Mark as precooked",
+      "description": "Marks a recipe dish of a day as cooked in advance (or removes the mark). A precooked dish and its side dishes add nothing to the shopping list; what was already handed to Bring stays there.",
+      "fields": {
+        "date": {
+          "name": "Day",
+          "description": "The day (today or later)."
+        },
+        "recipe": {
+          "name": "Recipe",
+          "description": "Name or ID of the recipe planned on that day."
+        },
+        "precooked": {
+          "name": "Precooked",
+          "description": "On = cooked in advance (default), off = remove the mark."
         }
       }
     }

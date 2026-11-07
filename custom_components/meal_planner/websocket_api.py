@@ -150,6 +150,7 @@ async def ws_ingredient_delete(coordinator: MealPlannerCoordinator, msg: dict[st
         vol.Optional("text"): str,
         vol.Optional("portions"): vol.Any(None, vol.All(int, vol.Range(min=1, max=50))),
         vol.Optional("side_ids", default=list): [str],
+        vol.Optional("precooked", default=False): bool,
     }
 )
 @_handler
@@ -161,6 +162,7 @@ async def ws_plan_add(coordinator: MealPlannerCoordinator, msg: dict[str, Any]) 
         text=text,
         portions=msg.get("portions"),
         side_ids=msg["side_ids"],
+        precooked=msg["precooked"],
     )
     return {"id": entry["id"]}
 
@@ -196,6 +198,18 @@ async def ws_plan_move_day(coordinator: MealPlannerCoordinator, msg: dict[str, A
 @_handler
 async def ws_plan_portions(coordinator: MealPlannerCoordinator, msg: dict[str, Any]) -> None:
     await coordinator.async_set_portions(msg["entry_id"], msg["portions"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}plan/precooked",
+        vol.Required("entry_id"): str,
+        vol.Required("precooked"): bool,
+    }
+)
+@_handler
+async def ws_plan_precooked(coordinator: MealPlannerCoordinator, msg: dict[str, Any]) -> None:
+    await coordinator.async_set_precooked(msg["entry_id"], msg["precooked"])
 
 
 @websocket_api.websocket_command(
@@ -239,6 +253,7 @@ async def ws_plan_suggest(coordinator: MealPlannerCoordinator, msg: dict[str, An
                 vol.Required("recipe_id"): str,
                 vol.Optional("portions"): vol.Any(None, vol.All(int, vol.Range(min=1, max=50))),
                 vol.Optional("side_ids", default=list): [str],
+                vol.Optional("precooked", default=False): bool,
             }
         ],
     }
@@ -298,6 +313,7 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
         ws_plan_clear,
         ws_plan_suggest,
         ws_plan_apply_suggestions,
+        ws_plan_precooked,
         ws_shopping_preview,
         ws_shopping_transfer,
     ):

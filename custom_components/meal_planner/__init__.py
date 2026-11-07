@@ -28,6 +28,7 @@ from .const import (
     SERVICE_DELETE_RECIPE,
     SERVICE_GET_PLAN,
     SERVICE_REMOVE_MEAL,
+    SERVICE_SET_PRECOOKED,
     SERVICE_SUGGEST_MEALS,
     SERVICE_TRANSFER_TO_BRING,
     ROLES,
@@ -61,10 +62,18 @@ SERVICE_ADD_MEAL_SCHEMA = vol.All(
             vol.Optional("text"): cv.string,
             vol.Optional("portions"): _PORTIONS,
             vol.Optional("sides"): vol.All(cv.ensure_list, [cv.string]),
+            vol.Optional("precooked", default=False): cv.boolean,
         }
     ),
     cv.has_at_least_one_key("recipe", "text"),
     cv.has_at_most_one_key("recipe", "text"),
+)
+SERVICE_SET_PRECOOKED_SCHEMA = vol.Schema(
+    {
+        vol.Required("date"): cv.date,
+        vol.Required("recipe"): cv.string,
+        vol.Optional("precooked", default=True): cv.boolean,
+    }
 )
 SERVICE_REMOVE_MEAL_SCHEMA = vol.All(
     vol.Schema(
@@ -94,6 +103,7 @@ SERVICE_APPLY_SUGGESTIONS_SCHEMA = vol.Schema(
                     vol.Required("recipe"): cv.string,
                     vol.Optional("portions"): _PORTIONS,
                     vol.Optional("sides"): vol.All(cv.ensure_list, [cv.string]),
+                    vol.Optional("precooked", default=False): cv.boolean,
                 }
             )
         ]
@@ -170,8 +180,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             text=text or None,
             portions=call.data.get("portions"),
             side_ids=[c.find_recipe(ref)["id"] for ref in call.data.get("sides", [])],
+            precooked=call.data["precooked"],
         )
         return {"id": entry["id"]}
+
+    async def set_precooked(c: MealPlannerCoordinator, call: ServiceCall) -> None:
+        await c.async_set_precooked_on_day(
+            _iso(call.data["date"]),
+            c.find_recipe(call.data["recipe"])["id"],
+            call.data["precooked"],
+        )
 
     async def remove_meal(c: MealPlannerCoordinator, call: ServiceCall) -> None:
         day = _iso(call.data["date"])
@@ -201,6 +219,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     "recipe_id": c.find_recipe(item["recipe"])["id"],
                     "portions": item.get("portions"),
                     "side_ids": [c.find_recipe(ref)["id"] for ref in item.get("sides", [])],
+                    "precooked": item["precooked"],
                 }
                 for item in call.data["suggestions"]
             ]
@@ -220,6 +239,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         (SERVICE_TRANSFER_TO_BRING, transfer_to_bring, SERVICE_TRANSFER_SCHEMA, SupportsResponse.OPTIONAL),
         (SERVICE_ADD_MEAL, add_meal, SERVICE_ADD_MEAL_SCHEMA, SupportsResponse.OPTIONAL),
         (SERVICE_REMOVE_MEAL, remove_meal, SERVICE_REMOVE_MEAL_SCHEMA, SupportsResponse.NONE),
+        (SERVICE_SET_PRECOOKED, set_precooked, SERVICE_SET_PRECOOKED_SCHEMA, SupportsResponse.NONE),
         (SERVICE_CLEAR_DAY, clear_day, SERVICE_CLEAR_DAY_SCHEMA, SupportsResponse.OPTIONAL),
         (SERVICE_GET_PLAN, get_plan, SERVICE_GET_PLAN_SCHEMA, SupportsResponse.ONLY),
         (SERVICE_SUGGEST_MEALS, suggest_meals, SERVICE_SUGGEST_SCHEMA, SupportsResponse.ONLY),

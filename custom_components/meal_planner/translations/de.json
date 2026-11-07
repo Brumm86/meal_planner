@@ -79,6 +79,10 @@
         "sides": {
           "name": "Beilagen",
           "description": "Beilagen (Namen oder IDs von Rezepten), die zum Rezept gehören; sie folgen seinen Portionen. Nur bei Rezepten; jede muss als Beilage gekennzeichnet sein."
+        },
+        "precooked": {
+          "name": "Vorgekocht",
+          "description": "Vorgekocht: Das Gericht setzt nichts auf die Einkaufsliste. Nur bei Rezepten."
         }
       }
     },
@@ -144,7 +148,7 @@
       "fields": {
         "suggestions": {
           "name": "Vorschläge",
-          "description": "Liste aus Einträgen mit date, recipe (Name oder ID) und optional portions und sides (Namen oder IDs)."
+          "description": "Liste aus Einträgen mit date, recipe (Name oder ID) und optional portions, sides (Namen oder IDs) und precooked (true/false)."
         }
       }
     },
@@ -197,6 +201,24 @@
         "recipe": {
           "name": "Rezept",
           "description": "Name oder ID des Rezepts."
+        }
+      }
+    },
+    "set_precooked": {
+      "name": "Als vorgekocht kennzeichnen",
+      "description": "Kennzeichnet ein Rezept-Gericht eines Tages als vorgekocht (oder hebt die Kennzeichnung auf). Ein vorgekochtes Gericht und seine Beilagen setzen nichts auf die Einkaufsliste; was schon an Bring übergeben wurde, bleibt dort.",
+      "fields": {
+        "date": {
+          "name": "Tag",
+          "description": "Der Tag (heute oder später)."
+        },
+        "recipe": {
+          "name": "Rezept",
+          "description": "Name oder ID des Rezepts, das an diesem Tag geplant ist."
+        },
+        "precooked": {
+          "name": "Vorgekocht",
+          "description": "An = vorgekocht (Standard), aus = Kennzeichnung entfernen."
         }
       }
     }
