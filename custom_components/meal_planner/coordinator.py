@@ -649,6 +649,30 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise MealPlannerError("not_found", "Der Eintrag steht an diesem Tag nicht im Plan")
         await self.async_remove_meal(entry["id"])
 
+    async def async_move_day(self, from_date: str, to_date: str) -> int:
+        """Swap two days completely; an empty target simply takes the dishes over.
+
+        All dishes (with their sides and portions) of both days change places.
+        Returns how many entries were moved.
+        """
+        source = iso_date(from_date)
+        target = iso_date(to_date)
+        if source == target:
+            return 0
+        today = self.today().isoformat()
+        if source < today or target < today:
+            raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr ändern")
+        first = list(self.plan.get_by_date(source))
+        second = list(self.plan.get_by_date(target))
+        if not first and not second:
+            return 0
+        for entry in first:
+            await self.plan.async_update_item(entry["id"], {"date": target})
+        for entry in second:
+            await self.plan.async_update_item(entry["id"], {"date": source})
+        await self.async_refresh()
+        return len(first) + len(second)
+
     async def async_clear_plan(self, date: str) -> int:
         """Remove every dish of one day; returns how many were removed."""
         day = iso_date(date)

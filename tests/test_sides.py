@@ -438,3 +438,44 @@ async def test_websocket_plan_add_and_sides(hass, hass_ws_client, init_integrati
     reply = await client.receive_json()
     assert reply["success"]
     assert c.recipes.data[schnitzel["id"]]["roles"] == ["main", "side"]
+
+
+# --------------------------------------------------------------------- move day
+
+
+async def test_move_day_swaps_whole_days(hass, hass_ws_client, init_integration) -> None:
+    c = init_integration.runtime_data
+    reis = await _recipe(c, "Reis", roles=["side"])
+    a = await _recipe(c, "A", side_ids=[reis["id"]])
+    b = await _recipe(c, "B")
+    d = await _recipe(c, "D")
+    first = await c.async_add_meal(_day(1), recipe_id=a["id"], side_ids=[reis["id"]], portions=3)
+    await c.async_add_meal(_day(1), text="Reste")
+    await c.async_add_meal(_day(2), recipe_id=b["id"])
+
+    client = await hass_ws_client(hass)
+    await client.send_json(
+        {"id": 1, "type": "meal_planner/plan/move_day", "from_date": _day(1), "to_date": _day(2)}
+    )
+    reply = await client.receive_json()
+    assert reply["success"], reply
+    assert reply["result"] == {"moved": 3}
+    assert {e["recipe_id"] or e["text"] for e in c.plan.get_by_date(_day(2))} == {a["id"], "Reste"}
+    assert [e["recipe_id"] for e in c.plan.get_by_date(_day(1))] == [b["id"]]
+    moved = c.plan.data[first["id"]]
+    assert moved["side_ids"] == [reis["id"]] and moved["portions"] == 3
+
+    # empty target takes the dishes over
+    assert await c.async_move_day(_day(1), _day(5)) == 1
+    assert not c.plan.get_by_date(_day(1)) and len(c.plan.get_by_date(_day(5))) == 1
+    # same day / two empty days: nothing happens
+    assert await c.async_move_day(_day(5), _day(5)) == 0
+    assert await c.async_move_day(_day(7), _day(8)) == 0
+    assert d
+
+
+async def test_move_day_rejects_past(hass, init_integration) -> None:
+    c = init_integration.runtime_data
+    with pytest.raises(MealPlannerError) as err:
+        await c.async_move_day(_day(-1), _day(1))
+    assert err.value.code == "date_in_past"

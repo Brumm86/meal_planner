@@ -233,7 +233,10 @@ PLAN_CREATE_SCHEMA = vol.All(
     ),
     _validate_plan_item,
 )
-PLAN_UPDATE_SCHEMA = vol.Schema({vol.Optional(k): v for k, v in _PLAN_FIELDS.items()})
+# The date may change (moving a day); the entry id stays as it is.
+PLAN_UPDATE_SCHEMA = vol.Schema(
+    {vol.Optional("date"): iso_date, **{vol.Optional(k): v for k, v in _PLAN_FIELDS.items()}}
+)
 
 
 class _MealPlannerCollection(collection.DictStorageCollection):
@@ -332,7 +335,7 @@ class PlanCollection(_MealPlannerCollection):
     async def _update_data(self, item: dict, update_data: dict) -> dict:
         updated = await super()._update_data(item, update_data)
         # Re-run the cross-field rule on the merged result (also normalises
-        # the portions of text entries); the id/date never change.
+        # the portions of text entries); the id never changes.
         return _validate_plan_item(updated)
 
 

@@ -175,6 +175,19 @@ async def ws_plan_remove(coordinator: MealPlannerCoordinator, msg: dict[str, Any
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): f"{WS_PREFIX}plan/move_day",
+        vol.Required("from_date"): str,
+        vol.Required("to_date"): str,
+    }
+)
+@_handler
+async def ws_plan_move_day(coordinator: MealPlannerCoordinator, msg: dict[str, Any]) -> dict:
+    moved = await coordinator.async_move_day(msg["from_date"], msg["to_date"])
+    return {"moved": moved}
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): f"{WS_PREFIX}plan/portions",
         vol.Required("entry_id"): str,
         vol.Required("portions"): vol.Any(None, vol.All(int, vol.Range(min=1, max=50))),
@@ -279,6 +292,7 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
         ws_ingredient_merge,
         ws_plan_add,
         ws_plan_remove,
+        ws_plan_move_day,
         ws_plan_portions,
         ws_plan_sides,
         ws_plan_clear,

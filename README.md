@@ -2,10 +2,11 @@
 
 Home-Assistant-Integration zur Planung des Mittagessens: Rezepte mit strukturierten Zutaten, ein fortlaufender Speiseplan und eine Einkaufsliste mit Übergabe an Bring.
 
-## Stand: v0.5.0
+## Stand: v0.6.0
 
 - Rezepte (Name, Basisportionen, Zutaten, Dauer, Tags, Zubereitung, Notiz/Link, „zuletzt geplant“)
 - **Rolle und Beilagen:** Jedes Rezept ist Hauptgericht, Beilage oder beides. An einem Hauptgericht werden die **passenden Beilagen** hinterlegt (z. B. beim Schnitzel Kartoffelgratin, Spätzle, Gemüse). Im Plan hängen sie als Beilage am Eintrag des Hauptgerichts: gemeinsam angezeigt, gemeinsam gelöscht, die Personenzahl folgt dem Hauptgericht; ihre Zutaten laufen in die Einkaufsliste. Im Plan werden nur die hinterlegten Beilagen angeboten. Es gibt keine verschachtelten Rezepte – Haupt- und Beilage bleiben eigene, flache Rezepte. Bestehende Rezepte gelten als Hauptgericht.
+- **Tage verschieben (Drag and Drop):** Am Griff ⠿ vor dem Datum lässt sich ein ganzer Tag auf einen anderen ziehen (Maus und Touch). Die Tage werden komplett getauscht – alle Gerichte samt Beilagen und Portionen wechseln; ein leerer Zieltag übernimmt sie einfach. Das geht auch im Planungsfenster mit den Vorschlägen. Vergangene Tage bleiben unverändert. Websocket: `meal_planner/plan/move_day` (`from_date`, `to_date`).
 - Zutatenkatalog mit Autovervollständigung und fester Einheitenliste (g, kg, ml, l, Stück, EL, TL, Bund, Packung, Dose, Zehe, Prise)
 - Speiseplan als fortlaufender Kalender (Standard: 10 Tage ab heute); **pro Tag beliebig viele Gerichte** (Rezept oder Freitext wie „Reste“, „Auswärts“), Personenzahl pro Gericht überschreibbar; ein Rezept steht pro Tag höchstens einmal
 - **Einkauf:** Vorschau für einen wählbaren Zeitraum, Mengen skaliert auf die Portionen und zusammengerechnet (g/kg und ml/l werden umgerechnet). Positionen lassen sich abhaken, in der Menge ändern und um eigene Einträge ergänzen; diese Änderungen gelten nur für den einen Einkauf.

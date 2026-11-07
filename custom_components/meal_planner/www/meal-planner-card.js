@@ -20,7 +20,7 @@
 (function () {
   "use strict";
 
-  var CARD_VERSION = "0.5.0";
+  var CARD_VERSION = "0.6.0";
   var QUICK_TEXTS = ["Reste", "Auswärts", "Bestellen"];
 
   function esc(value) {
@@ -102,6 +102,8 @@
     "label.field{display:block;margin-bottom:10px}" +
     "label.field>span{display:block;font-size:.85em;color:var(--secondary-text-color);margin-bottom:3px}" +
     ".day{display:grid;grid-template-columns:140px 1fr auto;gap:8px 12px;align-items:center;padding:8px 6px;border-bottom:1px solid var(--divider-color)}" +
+    ".grip{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;padding:2px 6px;margin-right:2px;color:var(--secondary-text-color);font-size:1.1em}" +
+    ".dragging{opacity:.45}.dropover{outline:2px dashed var(--primary-color);outline-offset:-2px;border-radius:8px}" +
     ".day.today{background:var(--secondary-background-color);border-radius:8px}" +
     ".day .date{font-weight:500}" +
     ".day .meals{display:flex;flex-direction:column;gap:6px;min-width:0}" +
@@ -202,6 +204,12 @@
       this.shadowRoot.addEventListener("touchstart", function (ev) {
         self._pressTarget = ev.target;
       }, { passive: true });
+      // Drag and drop of whole days (mouse and touch) via the grip handle.
+      this._drag = null;
+      this.shadowRoot.addEventListener("pointerdown", this._dragStart.bind(this));
+      this.shadowRoot.addEventListener("pointermove", this._dragMove.bind(this));
+      this.shadowRoot.addEventListener("pointerup", this._dragEnd.bind(this));
+      this.shadowRoot.addEventListener("pointercancel", this._dragCancel.bind(this));
     }
 
     static getStubConfig() {
@@ -373,8 +381,8 @@
       for (var i = 0; i < snap.settings.horizon_days; i++) {
         var iso = addDays(snap.today, i);
         var entries = snap.plan[iso] || [];
-        html += '<div class="day' + (i === 0 ? " today" : "") + '">';
-        html += '<div class="date">' + esc(dayLabel(iso)) + (i === 0 ? ' <span class="muted">· heute</span>' : "") + "</div>";
+        html += '<div class="day' + (i === 0 ? " today" : "") + '" data-dropdate="' + iso + '" data-dropscope="plan">';
+        html += '<div class="date">' + (entries.length ? '<span class="grip" data-drag="plan" data-date="' + iso + '" title="Tag per Drag and Drop verschieben">⠿</span>' : "") + esc(dayLabel(iso)) + (i === 0 ? ' <span class="muted">· heute</span>' : "") + "</div>";
         if (!entries.length) {
           html += '<div class="meals"><div class="meal muted">– nichts geplant –</div></div>';
         } else {
@@ -439,6 +447,89 @@
       return null;
     }
 
+    // ------------------------------------------------------------ drag and drop
+
+    _dragStart(ev) {
+      var grip = ev.target && ev.target.closest ? ev.target.closest("[data-drag]") : null;
+      if (!grip || (ev.pointerType === "mouse" && ev.button !== 0)) return;
+      var scope = grip.getAttribute("data-drag");
+      var from = grip.getAttribute("data-date");
+      var row = grip.closest("[data-dropdate]");
+      this._drag = { scope: scope, from: from, row: row, over: null };
+      if (row) row.classList.add("dragging");
+      try { grip.setPointerCapture(ev.pointerId); } catch (e) { /* not essential */ }
+      ev.preventDefault();
+    }
+
+    _dropTarget(ev) {
+      var d = this._drag;
+      var at = this.shadowRoot.elementFromPoint ? this.shadowRoot.elementFromPoint(ev.clientX, ev.clientY) : null;
+      var row = at && at.closest ? at.closest("[data-dropdate]") : null;
+      if (!row || row.getAttribute("data-dropscope") !== d.scope) return null;
+      return row;
+    }
+
+    _dragMove(ev) {
+      var d = this._drag;
+      if (!d) return;
+      var row = this._dropTarget(ev);
+      if (row === d.row) row = null;
+      if (d.over && d.over !== row) d.over.classList.remove("dropover");
+      if (row) row.classList.add("dropover");
+      d.over = row;
+    }
+
+    _dragClear() {
+      var d = this._drag;
+      this._drag = null;
+      if (!d) return null;
+      if (d.row) d.row.classList.remove("dragging");
+      if (d.over) d.over.classList.remove("dropover");
+      return d;
+    }
+
+    _dragCancel() {
+      this._dragClear();
+    }
+
+    _dragEnd(ev) {
+      if (!this._drag) return;
+      var row = this._dropTarget(ev);
+      var d = this._dragClear();
+      if (!row) return;
+      var to = row.getAttribute("data-dropdate");
+      if (!to || to === d.from) return;
+      if (d.scope === "plan") {
+        this._call({ type: "meal_planner/plan/move_day", from_date: d.from, to_date: to }).catch(function () {});
+      } else {
+        this._suggestMove(d.from, to);
+      }
+    }
+
+    // Planning window: swap the proposals of two days, or move one onto a day without proposal.
+    _suggestMove(from, to) {
+      var g = this._sugg;
+      if (!g) return;
+      var src = null;
+      var dst = null;
+      g.items.forEach(function (item) {
+        if (item.date === from) src = item;
+        if (item.date === to) dst = item;
+      });
+      if (!src) return;
+      if (dst) {
+        dst.date = from;
+      } else {
+        g.unfilled = g.unfilled.filter(function (d) { return d !== to; });
+        g.unfilled.push(from);
+        g.unfilled.sort();
+      }
+      src.date = to;
+      g.items.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+      g.message = "";
+      this._render();
+    }
+
     // ------------------------------------------------------------ suggestions
 
     _renderSuggestions() {
@@ -453,7 +544,7 @@
         g.items.forEach(function (item) {
           var r = self._recipe(item.recipe_id);
           html +=
-            '<div class="srow2"><div class="info"><div><b>' + esc(dayLabel(item.date)) + "</b> · " + esc(r ? r.name : item.recipe_name) + ((item.side_names || []).length ? " mit " + esc(item.side_names.join(", ")) : "") + "</div>" +
+            '<div class="srow2" data-dropdate="' + item.date + '" data-dropscope="sugg"><span class="grip" data-drag="sugg" data-date="' + item.date + '" title="Vorschlag auf einen anderen Tag ziehen">⠿</span><div class="info"><div><b>' + esc(dayLabel(item.date)) + "</b> · " + esc(r ? r.name : item.recipe_name) + ((item.side_names || []).length ? " mit " + esc(item.side_names.join(", ")) : "") + "</div>" +
             '<div class="sub">' + (r ? esc(self._lastPlannedText(r)) + (r.duration_min ? " · " + r.duration_min + " min" : "") : "") + "</div></div>" +
             '<button class="iconbtn" title="Neuer Vorschlag" data-action="suggest-reroll" data-date="' + item.date + '">🎲</button>' +
             '<button class="iconbtn" title="Ablehnen" data-action="suggest-reject" data-date="' + item.date + '">✕</button>' +
@@ -461,7 +552,7 @@
         });
         g.unfilled.forEach(function (day) {
           html +=
-            '<div class="srow2"><div class="info"><b>' + esc(dayLabel(day)) + '</b> <span class="muted">· kein Vorschlag</span></div>' +
+            '<div class="srow2" data-dropdate="' + day + '" data-dropscope="sugg"><div class="info"><b>' + esc(dayLabel(day)) + '</b> <span class="muted">· kein Vorschlag</span></div>' +
             '<button class="btn small secondary" data-action="suggest-reroll" data-date="' + day + '">🎲 Vorschlag holen</button></div>';
         });
       }
