@@ -52,7 +52,7 @@ def needed_for_entry(
     recipe: dict[str, Any] | None,
     household_size: int,
 ) -> Amounts:
-    """What one plan day needs: the recipe's lines scaled to the day's portions."""
+    """What one plan entry needs: the recipe's lines scaled to its portions."""
     if entry is None or recipe is None or entry.get("kind") != "recipe":
         return {}
     portions = entry.get("portions") or household_size

@@ -140,47 +140,62 @@ async def test_update_recipe_replaces_lines_and_dedupes_tags(hass, init_integrat
     assert updated["name"] == "Spaghetti"  # untouched fields survive
 
 
-async def test_plan_set_replace_and_clear(hass, init_integration) -> None:
+async def test_plan_several_meals_per_day_and_clear(hass, init_integration) -> None:
     coordinator = init_integration.runtime_data
     recipe = await _recipe(coordinator)
     day = _day(1)
 
-    await coordinator.async_set_plan(day, recipe_id=recipe["id"], portions=6)
-    entry = coordinator.data["plan"][day]
-    assert entry["kind"] == "recipe" and entry["portions"] == 6
+    first = await coordinator.async_add_meal(day, recipe_id=recipe["id"], portions=6)
+    await coordinator.async_add_meal(day, text="Reste")
+    entries = coordinator.data["plan"][day]
+    assert [e["kind"] for e in entries] == ["recipe", "text"]
+    assert entries[0]["portions"] == 6 and entries[1]["text"] == "Reste"
+    assert entries[1]["recipe_id"] is None and entries[1]["portions"] is None
 
-    await coordinator.async_set_plan(day, text="Reste")
-    entry = coordinator.data["plan"][day]
-    assert entry["kind"] == "text" and entry["text"] == "Reste"
-    assert entry["recipe_id"] is None and entry["portions"] is None
-    assert len(coordinator.data["plan"]) == 1
+    # The same recipe cannot be planned twice on one day.
+    with pytest.raises(MealPlannerError) as err:
+        await coordinator.async_add_meal(day, recipe_id=recipe["id"])
+    assert err.value.code == "recipe_already_planned"
 
-    await coordinator.async_clear_plan(day)
+    await coordinator.async_set_portions(first["id"], None)
+    assert coordinator.data["plan"][day][0]["portions"] is None
+    with pytest.raises(MealPlannerError) as err:
+        await coordinator.async_set_portions(entries[1]["id"], 2)
+    assert err.value.code == "not_a_recipe"
+
+    await coordinator.async_remove_meal(first["id"])
+    assert [e["kind"] for e in coordinator.data["plan"][day]] == ["text"]
+    with pytest.raises(MealPlannerError) as err:
+        await coordinator.async_remove_meal(first["id"])
+    assert err.value.code == "not_found"
+
+    await coordinator.async_add_meal(day, text="Nachtisch")
+    assert await coordinator.async_clear_plan(day) == 2
     assert day not in coordinator.data["plan"]
-    await coordinator.async_clear_plan(day)  # idempotent
+    assert await coordinator.async_clear_plan(day) == 0  # idempotent
 
 
 async def test_plan_rejects_bad_input(hass, init_integration) -> None:
     coordinator = init_integration.runtime_data
     recipe = await _recipe(coordinator)
     with pytest.raises(MealPlannerError) as err:
-        await coordinator.async_set_plan(_day(-1), text="gestern")
+        await coordinator.async_add_meal(_day(-1), text="gestern")
     assert err.value.code == "date_in_past"
     with pytest.raises(MealPlannerError) as err:
-        await coordinator.async_set_plan(_day(1), recipe_id="gibt-es-nicht")
+        await coordinator.async_add_meal(_day(1), recipe_id="gibt-es-nicht")
     assert err.value.code == "not_found"
     with pytest.raises(vol.Invalid):
-        await coordinator.async_set_plan(_day(1))
+        await coordinator.async_add_meal(_day(1))
     with pytest.raises(vol.Invalid):
-        await coordinator.async_set_plan(_day(1), recipe_id=recipe["id"], text="beides")
+        await coordinator.async_add_meal(_day(1), recipe_id=recipe["id"], text="beides")
     with pytest.raises(vol.Invalid):
-        await coordinator.async_set_plan("morgen", text="x")
+        await coordinator.async_add_meal("morgen", text="x")
 
 
 async def test_delete_recipe_blocked_while_planned(hass, init_integration) -> None:
     coordinator = init_integration.runtime_data
     recipe = await _recipe(coordinator)
-    await coordinator.async_set_plan(_day(2), recipe_id=recipe["id"])
+    await coordinator.async_add_meal(_day(2), recipe_id=recipe["id"])
 
     with pytest.raises(MealPlannerError) as err:
         await coordinator.async_delete_recipe(recipe["id"])
@@ -366,5 +381,5 @@ async def test_old_entries_are_pruned_and_deleted_recipes_become_text(hass, init
     assert _day(-100) not in coordinator.data["plan"]
 
     await coordinator.async_delete_recipe(recipe["id"])  # only a past use -> allowed
-    entry = coordinator.data["plan"][_day(-2)]
+    entry = coordinator.data["plan"][_day(-2)][0]
     assert entry["kind"] == "text" and entry["text"] == "Linsensuppe"

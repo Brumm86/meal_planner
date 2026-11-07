@@ -60,5 +60,13 @@ WS_PREFIX: Final = f"{DOMAIN}/"
 # Shopping list: longest range one preview / transfer may cover.
 MAX_SHOPPING_DAYS: Final = 31
 
-# Service
+# Services
 SERVICE_TRANSFER_TO_BRING: Final = "transfer_to_bring"
+SERVICE_ADD_MEAL: Final = "add_meal"
+SERVICE_REMOVE_MEAL: Final = "remove_meal"
+SERVICE_CLEAR_DAY: Final = "clear_day"
+SERVICE_GET_PLAN: Final = "get_plan"
+SERVICE_SUGGEST_MEALS: Final = "suggest_meals"
+SERVICE_APPLY_SUGGESTIONS: Final = "apply_suggestions"
+SERVICE_CREATE_RECIPE: Final = "create_recipe"
+SERVICE_DELETE_RECIPE: Final = "delete_recipe"

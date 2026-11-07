@@ -8,3 +8,133 @@ transfer_to_bring:
       required: false
       selector:
         date:
+
+add_meal:
+  fields:
+    date:
+      required: true
+      selector:
+        date:
+    recipe:
+      required: false
+      example: "Gulasch"
+      selector:
+        text:
+    text:
+      required: false
+      example: "Reste vom Vortag"
+      selector:
+        text:
+    portions:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
+
+remove_meal:
+  fields:
+    date:
+      required: true
+      selector:
+        date:
+    recipe:
+      required: false
+      example: "Gulasch"
+      selector:
+        text:
+    text:
+      required: false
+      example: "Reste vom Vortag"
+      selector:
+        text:
+
+clear_day:
+  fields:
+    date:
+      required: true
+      selector:
+        date:
+
+get_plan:
+  fields:
+    start_date:
+      required: false
+      selector:
+        date:
+    end_date:
+      required: false
+      selector:
+        date:
+
+suggest_meals:
+  fields:
+    dates:
+      required: false
+      example: "2026-11-09"
+      selector:
+        object:
+    exclude_recipes:
+      required: false
+      example: '["Gulasch"]'
+      selector:
+        object:
+
+apply_suggestions:
+  fields:
+    suggestions:
+      required: true
+      example: '[{"date": "2026-11-09", "recipe": "Gulasch"}]'
+      selector:
+        object:
+
+create_recipe:
+  fields:
+    name:
+      required: true
+      selector:
+        text:
+    base_portions:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
+    duration_min:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 1440
+          unit_of_measurement: min
+          mode: box
+    tags:
+      required: false
+      example: '["schnell", "vegetarisch"]'
+      selector:
+        object:
+    notes:
+      required: false
+      selector:
+        text:
+          multiline: true
+    instructions:
+      required: false
+      selector:
+        text:
+          multiline: true
+    ingredients:
+      required: false
+      example: '[{"name": "Zwiebel", "amount": 2, "unit": "Stück"}, {"name": "Salz"}]'
+      selector:
+        object:
+
+delete_recipe:
+  fields:
+    recipe:
+      required: true
+      example: "Gulasch"
+      selector:
+        text:

@@ -47,6 +47,138 @@
           "description": "Letzter Tag (Standard: letzter Tag des Planfensters)."
         }
       }
+    },
+    "add_meal": {
+      "name": "Gericht hinzufügen",
+      "description": "Fügt einem Tag ein Gericht hinzu (Rezept oder Freitext). Ein Tag kann mehrere Gerichte haben.",
+      "fields": {
+        "date": {
+          "name": "Tag",
+          "description": "Der Tag (heute oder später)."
+        },
+        "recipe": {
+          "name": "Rezept",
+          "description": "Name oder ID eines Rezepts. Alternativ Freitext angeben."
+        },
+        "text": {
+          "name": "Freitext",
+          "description": "Gericht ohne Rezept, z. B. „Restaurant“."
+        },
+        "portions": {
+          "name": "Portionen",
+          "description": "Anzahl Portionen (Standard: Haushaltsgröße). Nur bei Rezepten."
+        }
+      }
+    },
+    "remove_meal": {
+      "name": "Gericht entfernen",
+      "description": "Entfernt ein Gericht von einem Tag; andere Gerichte des Tages bleiben.",
+      "fields": {
+        "date": {
+          "name": "Tag",
+          "description": "Der Tag."
+        },
+        "recipe": {
+          "name": "Rezept",
+          "description": "Name oder ID des Rezepts. Alternativ Freitext angeben."
+        },
+        "text": {
+          "name": "Freitext",
+          "description": "Der Freitext des Gerichts."
+        }
+      }
+    },
+    "clear_day": {
+      "name": "Tag leeren",
+      "description": "Entfernt alle Gerichte eines Tages.",
+      "fields": {
+        "date": {
+          "name": "Tag",
+          "description": "Der Tag."
+        }
+      }
+    },
+    "get_plan": {
+      "name": "Plan abfragen",
+      "description": "Liefert den Plan für einen Zeitraum, pro Tag mit allen Gerichten.",
+      "fields": {
+        "start_date": {
+          "name": "Von",
+          "description": "Erster Tag (Standard: heute)."
+        },
+        "end_date": {
+          "name": "Bis",
+          "description": "Letzter Tag (Standard: letzter Tag des Planfensters)."
+        }
+      }
+    },
+    "suggest_meals": {
+      "name": "Vorschläge machen",
+      "description": "Schlägt Rezepte aus den vorhandenen vor, standardmäßig für die Tage des Planfensters ohne Gericht. Längst nicht geplante Rezepte kommen zuerst. Es wird nichts gespeichert; mit „Vorschläge übernehmen“ landen sie im Plan.",
+      "fields": {
+        "dates": {
+          "name": "Tage",
+          "description": "Nur für diese Tage vorschlagen (Liste von Daten, auch wenn dort schon etwas steht)."
+        },
+        "exclude_recipes": {
+          "name": "Rezepte ausschließen",
+          "description": "Rezepte (Name oder ID), die nicht vorgeschlagen werden sollen, z. B. der bisherige Vorschlag beim Neu-Würfeln."
+        }
+      }
+    },
+    "apply_suggestions": {
+      "name": "Vorschläge übernehmen",
+      "description": "Trägt Vorschläge in den Plan ein. Ein Rezept, das am Tag schon steht, wird übersprungen.",
+      "fields": {
+        "suggestions": {
+          "name": "Vorschläge",
+          "description": "Liste aus Einträgen mit date, recipe (Name oder ID) und optional portions."
+        }
+      }
+    },
+    "create_recipe": {
+      "name": "Rezept anlegen",
+      "description": "Legt ein Rezept an. Zutaten werden über ihren Namen dem Zutatenkatalog zugeordnet; fehlende werden angelegt.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Name des Rezepts."
+        },
+        "base_portions": {
+          "name": "Portionen",
+          "description": "Portionen, für die die Mengen gelten (Standard: Haushaltsgröße)."
+        },
+        "duration_min": {
+          "name": "Dauer",
+          "description": "Zubereitungsdauer in Minuten."
+        },
+        "tags": {
+          "name": "Tags",
+          "description": "Liste von Tags."
+        },
+        "notes": {
+          "name": "Notizen",
+          "description": "Freie Notizen."
+        },
+        "instructions": {
+          "name": "Zubereitung",
+          "description": "Zubereitungsschritte."
+        },
+        "ingredients": {
+          "name": "Zutaten",
+          "description": "Liste aus Einträgen mit name sowie optional amount und unit (g, kg, ml, l, Stück, EL, TL, Bund, Packung, Dose, Zehe, Prise)."
+        }
+      }
+    },
+    "delete_recipe": {
+      "name": "Rezept löschen",
+      "description": "Löscht ein Rezept, sofern es heute oder später nicht mehr im Plan steht.",
+      "fields": {
+        "recipe": {
+          "name": "Rezept",
+          "description": "Name oder ID des Rezepts."
+        }
+      }
     }
   },
   "exceptions": {

@@ -2,23 +2,52 @@
 
 Home-Assistant-Integration zur Planung des Mittagessens: Rezepte mit strukturierten Zutaten, ein fortlaufender Speiseplan und eine Einkaufsliste mit Übergabe an Bring.
 
-## Stand: Etappe 2 (v0.3.0)
+## Stand: v0.4.0
 
 - Rezepte (Name, Basisportionen, Zutaten, Dauer, Tags, Zubereitung, Notiz/Link, „zuletzt geplant“)
 - Zutatenkatalog mit Autovervollständigung und fester Einheitenliste (g, kg, ml, l, Stück, EL, TL, Bund, Packung, Dose, Zehe, Prise)
-- Speiseplan als fortlaufender Kalender (Standard: 10 Tage ab heute); pro Tag ein Rezept oder ein Freitext-Eintrag („Reste“, „Auswärts“, …), Personenzahl pro Tag überschreibbar
+- Speiseplan als fortlaufender Kalender (Standard: 10 Tage ab heute); **pro Tag beliebig viele Gerichte** (Rezept oder Freitext wie „Reste“, „Auswärts“), Personenzahl pro Gericht überschreibbar; ein Rezept steht pro Tag höchstens einmal
 - **Einkauf:** Vorschau für einen wählbaren Zeitraum, Mengen skaliert auf die Portionen und zusammengerechnet (g/kg und ml/l werden umgerechnet). Positionen lassen sich abhaken, in der Menge ändern und um eigene Einträge ergänzen; diese Änderungen gelten nur für den einen Einkauf.
 - **Übergabe an Bring** auf Knopfdruck (Menge als Beschreibung des Eintrags). Zutaten, die bei Bring schon offen sind, stehen in der Vorschau unabgehakt („schon auf der Liste“).
 - Pro Tag wird gemerkt, was übertragen wurde. Spätere Planänderungen ergänzen nur den Mehrbedarf; Weniger-Bedarf wird in der Karte als Hinweis angezeigt, bei Bring wird nie etwas gelöscht.
+- **Vorschläge:** Die Integration schlägt aus den vorhandenen Rezepten Gerichte für die Tage des Planfensters vor, die noch leer sind (am längsten nicht geplante Rezepte zuerst, kein Rezept doppelt). Ein Vorschlag wird erst nach Bestätigung in den Plan geschrieben; einzelne Tage lassen sich neu vorschlagen oder ablehnen.
 - Eine Lovelace-Karte mit den Tabs **Plan**, **Rezepte**, **Zutaten** und **Einkauf**
 
 Die Bring-Liste wird in den Optionen der Integration gewählt (Entitätsauswahl, nur `todo`-Entitäten der Bring-Integration). Ohne Auswahl ist die Übergabe deaktiviert.
 
-### Aktion `meal_planner.transfer_to_bring`
+### Aktionen (Services)
 
-Überträgt die unveränderte Einkaufsliste an Bring (für Automationen). Optional `start_date` / `end_date` (Standard: heute bis Ende des Planfensters). Zutaten, die bei Bring schon offen sind, werden übersprungen. Antwort: `{"added": <Anzahl>}`.
+Rezepte werden in den Aktionen über **Name oder ID** angegeben. Aktionen mit Antwort liefern ihr Ergebnis über `response_variable`.
 
-Folgt: Etappe 3 (Kalender, Sensoren „Mittagessen heute/morgen“, Vorschlag pro Tag).
+| Aktion | Zweck | Felder (Pflicht fett) | Antwort |
+|---|---|---|---|
+| `meal_planner.add_meal` | Gericht zu einem Tag hinzufügen | **`date`**, `recipe` *oder* `text`, `portions` | `{"id": …}` |
+| `meal_planner.remove_meal` | ein Gericht eines Tages entfernen | **`date`**, `recipe` *oder* `text` | – |
+| `meal_planner.clear_day` | alle Gerichte eines Tages entfernen | **`date`** | `{"removed": n}` |
+| `meal_planner.get_plan` | Plan abfragen | `start_date`, `end_date` (Standard: Planfenster) | `{"days": [{"date", "meals": […]}]}` |
+| `meal_planner.suggest_meals` | Vorschläge machen (speichert nichts) | `dates` (nur diese Tage), `exclude_recipes` | `{"suggestions": […], "unfilled": […]}` |
+| `meal_planner.apply_suggestions` | Vorschläge in den Plan übernehmen | **`suggestions`**: Liste aus `date`, `recipe`, optional `portions` | `{"added": n, "skipped": n}` |
+| `meal_planner.create_recipe` | Rezept anlegen | **`name`**, `base_portions`, `duration_min`, `tags`, `notes`, `instructions`, `ingredients` (`name`, `amount`, `unit`) | `{"id", "name", "created_ingredients"}` |
+| `meal_planner.delete_recipe` | Rezept löschen (nicht, solange es heute oder später geplant ist) | **`recipe`** | – |
+| `meal_planner.transfer_to_bring` | Einkaufsliste an Bring übergeben | `start_date`, `end_date` | `{"added": n}` |
+
+`suggest_meals` ohne `dates` schlägt für alle leeren Tage des Planfensters vor. Mit `dates` wird für genau diese Tage vorgeschlagen, auch wenn dort schon etwas steht; mit `exclude_recipes` lässt sich das bisherige Rezept beim erneuten Vorschlagen ausschließen. Zutaten in `create_recipe` werden über den Namen dem Zutatenkatalog zugeordnet (gleicher Name oder eindeutige Schreibvariante wie Zwiebel/Zwiebeln), fehlende werden angelegt und in `created_ingredients` genannt.
+
+Beispiel (Automation):
+
+```yaml
+- action: meal_planner.suggest_meals
+  response_variable: vorschlag
+- repeat:
+    for_each: "{{ vorschlag.suggestions }}"
+    sequence:
+      - action: meal_planner.add_meal
+        data:
+          date: "{{ repeat.item.date }}"
+          recipe: "{{ repeat.item.recipe_id }}"
+```
+
+Folgt: Kalender und Sensoren „Mittagessen heute/morgen“.
 
 ## Installation
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import date as date_cls, timedelta
 import logging
+import random
 from typing import Any
 
 import voluptuous as vol
@@ -43,6 +44,7 @@ from .storage import (
     RecipeCollection,
     TransferCollection,
     iso_date,
+    nfc,
     similarity_key,
     sort_key,
 )
@@ -154,6 +156,17 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Today in the Home Assistant time zone."""
         return dt_util.now().date()
 
+    @staticmethod
+    def _entry_view(entry: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": entry["id"],
+            "date": entry["date"],
+            "kind": entry["kind"],
+            "recipe_id": entry.get("recipe_id"),
+            "text": entry.get("text"),
+            "portions": entry.get("portions"),
+        }
+
     # --------------------------------------------------------------- snapshot
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -172,16 +185,9 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for item in sorted(self.ingredients.data.values(), key=lambda i: sort_key(i["name"]))
         ]
         tags = sorted({t for r in recipes for t in r.get("tags", [])}, key=sort_key)
-        plan = {
-            entry["date"]: {
-                "date": entry["date"],
-                "kind": entry["kind"],
-                "recipe_id": entry.get("recipe_id"),
-                "text": entry.get("text"),
-                "portions": entry.get("portions"),
-            }
-            for entry in self.plan.data.values()
-        }
+        plan: dict[str, list[dict[str, Any]]] = {}
+        for entry in self.plan.data.values():
+            plan.setdefault(entry["date"], []).append(self._entry_view(entry))
         return {
             "today": self.today().isoformat(),
             "settings": {
@@ -392,43 +398,252 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ------------------------------------------------------------------- plan
 
-    async def async_set_plan(
+    def find_recipe(self, reference: str) -> dict[str, Any]:
+        """Resolve a recipe by id or (case-insensitive) name; services use names."""
+        ref = reference.strip()
+        recipe = self.recipes.data.get(ref)
+        if recipe is None:
+            wanted = nfc(ref).casefold()
+            recipe = next(
+                (r for r in self.recipes.data.values() if nfc(r["name"]).casefold() == wanted),
+                None,
+            )
+        if recipe is None:
+            raise MealPlannerError("not_found", "Rezept nicht gefunden")
+        return recipe
+
+    async def _async_add_meal(
         self,
         date: str,
         *,
         recipe_id: str | None = None,
         text: str | None = None,
         portions: int | None = None,
-    ) -> None:
-        """Set the entry of one day (replaces whatever was planned there)."""
+    ) -> dict[str, Any] | None:
+        """Add one entry to a day without refreshing; ``None`` if the recipe is already there."""
         day = iso_date(date)
         if day < self.today().isoformat():
             raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr planen")
         if (recipe_id is None) == (text is None):
             raise vol.Invalid("exactly one of recipe_id or text is required")
-        if recipe_id is not None and recipe_id not in self.recipes.data:
-            raise MealPlannerError("not_found", "Rezept nicht gefunden")
-        fields = {
-            "kind": PLAN_KIND_RECIPE if recipe_id is not None else PLAN_KIND_TEXT,
-            "recipe_id": recipe_id,
-            "text": text,
-            "portions": portions,
-            "counted": False,
-        }
-        existing = self.plan.get_by_date(day)
-        if existing is None:
-            await self.plan.async_create_item({"date": day, **fields})
-        else:
-            await self.plan.async_update_item(existing["id"], fields)
+        if recipe_id is not None:
+            if recipe_id not in self.recipes.data:
+                raise MealPlannerError("not_found", "Rezept nicht gefunden")
+            if any(e.get("recipe_id") == recipe_id for e in self.plan.get_by_date(day)):
+                return None
+        return await self.plan.async_create_item(
+            {
+                "date": day,
+                "kind": PLAN_KIND_RECIPE if recipe_id is not None else PLAN_KIND_TEXT,
+                "recipe_id": recipe_id,
+                "text": text,
+                "portions": portions,
+            }
+        )
+
+    async def async_add_meal(
+        self,
+        date: str,
+        *,
+        recipe_id: str | None = None,
+        text: str | None = None,
+        portions: int | None = None,
+    ) -> dict[str, Any]:
+        """Add a dish (recipe or free text) to a day; a day may hold several."""
+        entry = await self._async_add_meal(date, recipe_id=recipe_id, text=text, portions=portions)
+        if entry is None:
+            raise MealPlannerError("recipe_already_planned", "Das Rezept steht an diesem Tag bereits im Plan")
+        await self.async_refresh()
+        return self._entry_view(entry)
+
+    async def async_remove_meal(self, entry_id: str) -> None:
+        """Remove one dish; past days stay untouched (history, last_planned)."""
+        entry = self.plan.data.get(entry_id)
+        if entry is None:
+            raise MealPlannerError("not_found", "Eintrag nicht gefunden")
+        if entry["date"] < self.today().isoformat():
+            raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr ändern")
+        await self.plan.async_delete_item(entry_id)
         await self.async_refresh()
 
-    async def async_clear_plan(self, date: str) -> None:
-        """Remove the entry of one day (no-op when nothing is planned)."""
+    async def async_set_portions(self, entry_id: str, portions: int | None) -> None:
+        """Change the portions of a recipe dish (``None`` = household default)."""
+        entry = self.plan.data.get(entry_id)
+        if entry is None:
+            raise MealPlannerError("not_found", "Eintrag nicht gefunden")
+        if entry["kind"] != PLAN_KIND_RECIPE:
+            raise MealPlannerError("not_a_recipe", "Nur Rezepte haben Portionen")
+        if entry["date"] < self.today().isoformat():
+            raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr ändern")
+        await self.plan.async_update_item(entry_id, {"portions": portions})
+        await self.async_refresh()
+
+    async def async_remove_recipe_from_day(self, date: str, recipe_id: str) -> None:
+        """Remove a recipe from a day by recipe (service convenience)."""
         day = iso_date(date)
-        existing = self.plan.get_by_date(day)
-        if existing is not None:
-            await self.plan.async_delete_item(existing["id"])
+        entry = next((e for e in self.plan.get_by_date(day) if e.get("recipe_id") == recipe_id), None)
+        if entry is None:
+            raise MealPlannerError("not_found", "Das Rezept steht an diesem Tag nicht im Plan")
+        await self.async_remove_meal(entry["id"])
+
+    async def async_remove_text_from_day(self, date: str, text: str) -> None:
+        """Remove a free-text dish from a day by its text (service convenience)."""
+        day = iso_date(date)
+        wanted = nfc(text).strip().casefold()
+        entry = next(
+            (
+                e
+                for e in self.plan.get_by_date(day)
+                if e["kind"] == PLAN_KIND_TEXT and nfc(e["text"]).casefold() == wanted
+            ),
+            None,
+        )
+        if entry is None:
+            raise MealPlannerError("not_found", "Der Eintrag steht an diesem Tag nicht im Plan")
+        await self.async_remove_meal(entry["id"])
+
+    async def async_clear_plan(self, date: str) -> int:
+        """Remove every dish of one day; returns how many were removed."""
+        day = iso_date(date)
+        entries = self.plan.get_by_date(day)
+        if entries and day < self.today().isoformat():
+            raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr ändern")
+        for entry in entries:
+            await self.plan.async_delete_item(entry["id"])
+        if entries:
             await self.async_refresh()
+        return len(entries)
+
+    def get_plan(self, start: str | None, end: str | None) -> list[dict[str, Any]]:
+        """The plan per day for a range (default: today + the plan window)."""
+        today = self.today()
+        first = date_cls.fromisoformat(iso_date(start)) if start else today
+        last = (
+            date_cls.fromisoformat(iso_date(end))
+            if end
+            else first + timedelta(days=self.horizon_days - 1)
+        )
+        if last < first:
+            raise MealPlannerError("invalid_range", "Das Ende liegt vor dem Beginn")
+        if (last - first).days + 1 > MAX_SHOPPING_DAYS:
+            raise MealPlannerError(
+                "range_too_long", f"Höchstens {MAX_SHOPPING_DAYS} Tage auf einmal"
+            )
+        days = []
+        for day in self._days(first, last):
+            meals = []
+            for entry in self.plan.get_by_date(day):
+                view = self._entry_view(entry)
+                recipe = self.recipes.data.get(entry.get("recipe_id") or "")
+                view["name"] = recipe["name"] if recipe else entry.get("text")
+                meals.append(view)
+            days.append({"date": day, "meals": meals})
+        return days
+
+    # ------------------------------------------------------------ suggestions
+
+    def suggest_meals(
+        self,
+        dates: list[str] | None = None,
+        exclude_recipe_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Propose recipes for days without a dish (nothing is stored).
+
+        Without ``dates`` the days of the plan window that have no entry yet are
+        filled; with ``dates`` exactly those days are proposed for (also when
+        they already hold something - the user asked for them, e.g. to re-roll
+        one proposal). Recipes are taken from the collection, longest-not-planned
+        first (never planned = first); ties are broken randomly so a re-roll can
+        differ. A recipe is proposed at most once, and never when it is already
+        planned within the window or listed in ``exclude_recipe_ids`` (the card
+        passes the proposals it currently shows). Days for which no recipe is
+        left are returned as ``unfilled``.
+        """
+        today = self.today()
+        window_end = today + timedelta(days=self.horizon_days - 1)
+        window = self._days(today, window_end)
+        if dates is None:
+            targets = [day for day in window if not self.plan.get_by_date(day)]
+        else:
+            targets = sorted({iso_date(day) for day in dates})
+            if len(targets) > MAX_SHOPPING_DAYS:
+                raise MealPlannerError(
+                    "range_too_long", f"Höchstens {MAX_SHOPPING_DAYS} Tage auf einmal"
+                )
+            if targets and targets[0] < today.isoformat():
+                raise MealPlannerError(
+                    "date_in_past", "Für vergangene Tage gibt es keine Vorschläge"
+                )
+        blocked = {
+            e["recipe_id"]
+            for e in self.plan.data.values()
+            if e["kind"] == PLAN_KIND_RECIPE and window[0] <= e["date"] <= window[-1]
+        }
+        blocked.update(exclude_recipe_ids or [])
+        candidates = [r for r in self.recipes.data.values() if r["id"] not in blocked]
+        random.shuffle(candidates)  # random tie-break; sort() below is stable
+        candidates.sort(key=lambda r: r.get("last_planned") or "")
+        suggestions = []
+        unfilled = []
+        for day in targets:
+            if candidates:
+                recipe = candidates.pop(0)
+                suggestions.append(
+                    {"date": day, "recipe_id": recipe["id"], "recipe_name": recipe["name"]}
+                )
+            else:
+                unfilled.append(day)
+        return {"suggestions": suggestions, "unfilled": unfilled}
+
+    async def async_apply_suggestions(self, suggestions: list[dict[str, Any]]) -> dict[str, int]:
+        """Write confirmed suggestions into the plan (a recipe already on its day is skipped)."""
+        for item in suggestions:  # validate everything first, then change
+            day = iso_date(item["date"])
+            if day < self.today().isoformat():
+                raise MealPlannerError("date_in_past", "Vergangene Tage lassen sich nicht mehr planen")
+            if item["recipe_id"] not in self.recipes.data:
+                raise MealPlannerError("not_found", "Rezept nicht gefunden")
+        added = skipped = 0
+        for item in suggestions:
+            entry = await self._async_add_meal(
+                item["date"], recipe_id=item["recipe_id"], portions=item.get("portions")
+            )
+            if entry is None:
+                skipped += 1
+            else:
+                added += 1
+        if added:
+            await self.async_refresh()
+        return {"added": added, "skipped": skipped}
+
+    # ------------------------------------------------- recipes by name (services)
+
+    async def async_create_recipe_by_names(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Create a recipe whose ingredient lines name catalog ingredients.
+
+        Services cannot offer an id picker, so lines carry a ``name``: an
+        existing catalog entry (same name, or - if exactly one - the same
+        spelling variant such as Zwiebel/Zwiebeln) is reused, otherwise the
+        ingredient is created. The names of newly created ones are returned.
+        """
+        lines = []
+        created: list[str] = []
+        for raw in data.get("ingredients", []):
+            name = nfc(raw["name"]).strip()
+            entry = self.ingredients.find_by_name(name)
+            if entry is None:
+                similar = self.ingredients.find_similar(name)
+                entry = similar[0] if len(similar) == 1 else None
+            if entry is None:
+                entry = await self.ingredients.async_create_item({"name": name})
+                created.append(entry["name"])
+            lines.append(
+                {"ingredient_id": entry["id"], "amount": raw.get("amount"), "unit": raw.get("unit")}
+            )
+        payload = {k: v for k, v in data.items() if k != "ingredients"}
+        payload["ingredients"] = lines
+        recipe = await self.async_save_recipe(None, payload)
+        return {"id": recipe["id"], "name": recipe["name"], "created_ingredients": created}
 
     # --------------------------------------------------------------- shopping
 
@@ -454,9 +669,11 @@ class MealPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return [(first + timedelta(days=i)).isoformat() for i in range((last - first).days + 1)]
 
     def _needed_on(self, day: str) -> shopping.Amounts:
-        entry = self.plan.get_by_date(day)
-        recipe = self.recipes.data.get(entry["recipe_id"]) if entry and entry.get("recipe_id") else None
-        return shopping.needed_for_entry(entry, recipe, self.household_size)
+        total: shopping.Amounts = {}
+        for entry in self.plan.get_by_date(day):
+            recipe = self.recipes.data.get(entry["recipe_id"]) if entry.get("recipe_id") else None
+            shopping.add_into(total, shopping.needed_for_entry(entry, recipe, self.household_size))
+        return total
 
     def _transferred_on(self, day: str) -> shopping.Amounts:
         record = self.transfers.get_by_date(day)

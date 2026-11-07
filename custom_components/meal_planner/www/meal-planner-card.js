@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  var CARD_VERSION = "0.3.0";
+  var CARD_VERSION = "0.4.0";
   var QUICK_TEXTS = ["Reste", "Auswärts", "Bestellen"];
 
   function esc(value) {
@@ -98,7 +98,13 @@
     ".day{display:grid;grid-template-columns:140px 1fr auto;gap:8px 12px;align-items:center;padding:8px 6px;border-bottom:1px solid var(--divider-color)}" +
     ".day.today{background:var(--secondary-background-color);border-radius:8px}" +
     ".day .date{font-weight:500}" +
+    ".day .meals{display:flex;flex-direction:column;gap:6px;min-width:0}" +
+    ".day .mealrow{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}" +
+    ".day .mealrow .meal{flex:1;min-width:120px}" +
     ".day .meal{min-width:0}" +
+    ".srow2{display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--divider-color)}" +
+    ".srow2 .info{flex:1;min-width:0}" +
+    ".srow2 .sub{font-size:.85em;color:var(--secondary-text-color)}" +
     ".day .meal .name{font-weight:500;overflow:hidden;text-overflow:ellipsis}" +
     ".day .actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}" +
     ".portions{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--divider-color);border-radius:16px;padding:0 4px}" +
@@ -158,6 +164,7 @@
       this._editor = null; // {id, draft}
       this._selectedId = null;
       this._picker = null; // {date, search, tag, sort}
+      this._sugg = null; // {items: [{date, recipe_id}], unfilled: [date], rejected: [recipe_id], loading, message}
       this._search = "";
       this._tagFilter = "";
       this._confirmDelete = false;
@@ -250,7 +257,7 @@
             if (!self._shop || !self._shop.dirty) self._loadShop();
             return;
           }
-          if (!self._editor && !self._picker && !self._ingDialog) self._render();
+          if (!self._editor && !self._picker && !self._sugg && !self._ingDialog) self._render();
         }, { type: "meal_planner/subscribe" })
         .then(function (unsub) {
           self._unsub = unsub;
@@ -329,6 +336,7 @@
           "</div>" +
           (this._tab === "plan" ? this._renderPlan() : this._tab === "recipes" ? this._renderRecipes() : this._tab === "shop" ? this._renderShop() : this._renderIngredients()) +
           (this._picker ? this._renderPicker() : "") +
+          (this._sugg ? this._renderSuggestions() : "") +
           (this._ingDialog ? this._renderIngDialog() : "");
       }
       var title = this._config.title ? "<h2 style=\"margin:0 0 8px\">" + esc(this._config.title) + "</h2>" : "";
@@ -349,47 +357,159 @@
 
     _renderPlan() {
       var snap = this._snap;
-      var html = '<div class="muted" style="margin-bottom:8px">Standard: ' + snap.settings.household_size + " Personen</div>";
+      var self = this;
+      var html = '<div class="toolbar"><span class="muted" style="flex:1">Standard: ' + snap.settings.household_size + ' Personen</span>' +
+        '<button class="btn small" data-action="suggest-open">💡 Vorschläge für freie Tage</button></div>';
       for (var i = 0; i < snap.settings.horizon_days; i++) {
         var iso = addDays(snap.today, i);
-        var entry = snap.plan[iso];
+        var entries = snap.plan[iso] || [];
         html += '<div class="day' + (i === 0 ? " today" : "") + '">';
         html += '<div class="date">' + esc(dayLabel(iso)) + (i === 0 ? ' <span class="muted">· heute</span>' : "") + "</div>";
-        if (!entry) {
-          html += '<div class="meal muted">– nichts geplant –</div>';
-          html += '<div class="actions"><button class="btn small" data-action="pick" data-date="' + iso + '">Auswählen</button></div>';
-        } else if (entry.kind === "text") {
-          html += '<div class="meal"><span class="name">' + esc(entry.text) + "</span></div>";
-          html += '<div class="actions">' + this._dayButtons(iso) + "</div>";
+        if (!entries.length) {
+          html += '<div class="meals"><div class="meal muted">– nichts geplant –</div></div>';
         } else {
-          var recipe = this._recipe(entry.recipe_id);
-          var portions = entry.portions || snap.settings.household_size;
-          html += '<div class="meal"><span class="name">' + esc(recipe ? recipe.name : "(Rezept fehlt)") + "</span>";
-          if (recipe && recipe.duration_min) html += ' <span class="muted">· ' + recipe.duration_min + " min</span>";
+          html += '<div class="meals">';
+          entries.forEach(function (entry) {
+            html += '<div class="mealrow">';
+            if (entry.kind === "text") {
+              html += '<div class="meal"><span class="name">' + esc(entry.text) + "</span></div>";
+              html += '<div class="actions">' + self._mealRemove(entry) + "</div>";
+            } else {
+              var recipe = self._recipe(entry.recipe_id);
+              var portions = entry.portions || snap.settings.household_size;
+              html += '<div class="meal"><span class="name">' + esc(recipe ? recipe.name : "(Rezept fehlt)") + "</span>";
+              if (recipe && recipe.duration_min) html += ' <span class="muted">· ' + recipe.duration_min + " min</span>";
+              html += "</div>";
+              html +=
+                '<div class="actions"><span class="portions' + (entry.portions ? " custom" : "") + '" title="Personen">' +
+                '<button data-action="portions" data-entry="' + esc(entry.id) + '" data-delta="-1">−</button>' +
+                "<span>" + portions + " 👤</span>" +
+                '<button data-action="portions" data-entry="' + esc(entry.id) + '" data-delta="1">+</button></span>' +
+                self._mealRemove(entry) + "</div>";
+            }
+            html += "</div>";
+          });
           html += "</div>";
-          html +=
-            '<div class="actions"><span class="portions' + (entry.portions ? " custom" : "") + '" title="Personen">' +
-            '<button data-action="portions" data-date="' + iso + '" data-delta="-1">−</button>' +
-            "<span>" + portions + " 👤</span>" +
-            '<button data-action="portions" data-date="' + iso + '" data-delta="1">+</button></span>' +
-            this._dayButtons(iso) + "</div>";
         }
-        html += "</div>";
+        html += '<div class="actions"><button class="btn small' + (entries.length ? " secondary" : "") + '" data-action="pick" data-date="' + iso + '">' + (entries.length ? "+ Gericht" : "Auswählen") + "</button>";
+        if (entries.length > 1) html += '<button class="iconbtn" title="Tag leeren" data-action="clear-day" data-date="' + iso + '">🗑</button>';
+        html += "</div></div>";
       }
       return html;
     }
 
-    _dayButtons(iso) {
-      return (
-        '<button class="iconbtn" title="Ändern" data-action="pick" data-date="' + iso + '">✎</button>' +
-        '<button class="iconbtn" title="Leeren" data-action="clear-day" data-date="' + iso + '">🗑</button>'
-      );
+    _mealRemove(entry) {
+      return '<button class="iconbtn" title="Entfernen" data-action="remove-meal" data-entry="' + esc(entry.id) + '">✕</button>';
+    }
+
+    _findEntry(id) {
+      var plan = this._snap.plan;
+      for (var d in plan) {
+        if (!Object.prototype.hasOwnProperty.call(plan, d)) continue;
+        for (var i = 0; i < plan[d].length; i++) if (plan[d][i].id === id) return plan[d][i];
+      }
+      return null;
+    }
+
+    // ------------------------------------------------------------ suggestions
+
+    _renderSuggestions() {
+      var g = this._sugg;
+      var self = this;
+      var html = '<div class="overlay" data-action="suggest-close"><div class="dialog" data-stop="1"><h3>Vorschläge für freie Tage</h3>';
+      if (g.loading) {
+        html += '<div class="muted">Lade…</div>';
+      } else {
+        if (g.message) html += '<div class="hint">' + esc(g.message) + "</div>";
+        if (!g.items.length && !g.unfilled.length) html += '<div class="muted" style="padding:8px">Alle Tage im Planfenster haben schon ein Gericht.</div>';
+        g.items.forEach(function (item) {
+          var r = self._recipe(item.recipe_id);
+          html +=
+            '<div class="srow2"><div class="info"><div><b>' + esc(dayLabel(item.date)) + "</b> · " + esc(r ? r.name : item.recipe_name) + "</div>" +
+            '<div class="sub">' + (r ? esc(self._lastPlannedText(r)) + (r.duration_min ? " · " + r.duration_min + " min" : "") : "") + "</div></div>" +
+            '<button class="iconbtn" title="Neuer Vorschlag" data-action="suggest-reroll" data-date="' + item.date + '">🎲</button>' +
+            '<button class="iconbtn" title="Ablehnen" data-action="suggest-reject" data-date="' + item.date + '">✕</button>' +
+            '<button class="btn small" data-action="suggest-apply" data-date="' + item.date + '">Übernehmen</button></div>';
+        });
+        g.unfilled.forEach(function (day) {
+          html +=
+            '<div class="srow2"><div class="info"><b>' + esc(dayLabel(day)) + '</b> <span class="muted">· kein Vorschlag</span></div>' +
+            '<button class="btn small secondary" data-action="suggest-reroll" data-date="' + day + '">🎲 Vorschlag holen</button></div>';
+        });
+      }
+      html += '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px"><button class="btn secondary" data-action="suggest-close">Schließen</button>';
+      html += '<button class="btn"' + (g.loading || !g.items.length ? " disabled" : "") + ' data-action="suggest-apply-all">Alle übernehmen</button></div></div></div>';
+      return html;
+    }
+
+    // Everything that must not be proposed again: the shown proposals plus
+    // those the user rejected or re-rolled while the dialog was open.
+    _suggestIds() {
+      return this._sugg.items.map(function (i) { return i.recipe_id; }).concat(this._sugg.rejected);
+    }
+
+    _suggestOpen() {
+      var self = this;
+      this._sugg = { items: [], unfilled: [], rejected: [], loading: true, message: "" };
+      this._render();
+      this._call({ type: "meal_planner/plan/suggest" }).then(function (res) {
+        self._sugg.items = res.suggestions;
+        self._sugg.unfilled = res.unfilled;
+        self._sugg.loading = false;
+        if (res.unfilled.length && res.suggestions.length) self._sugg.message = "Für " + res.unfilled.length + " Tag(e) gibt es nicht genug verschiedene Rezepte.";
+        self._render();
+      }).catch(function () {
+        self._sugg = null;
+        self._render();
+      });
+    }
+
+    _suggestReroll(date) {
+      var self = this;
+      var g = this._sugg;
+      // The current proposal for this day is excluded as well as all others shown.
+      this._call({ type: "meal_planner/plan/suggest", dates: [date], exclude_recipe_ids: this._suggestIds() }).then(function (res) {
+        if (!self._sugg) return;
+        if (!res.suggestions.length) {
+          g.message = "Kein weiteres Rezept verfügbar.";
+        } else {
+          g.message = "";
+          g.unfilled = g.unfilled.filter(function (d) { return d !== date; });
+          var found = false;
+          g.items = g.items.map(function (item) {
+            if (item.date !== date) return item;
+            found = true;
+            g.rejected.push(item.recipe_id);
+            return res.suggestions[0];
+          });
+          if (!found) {
+            g.items.push(res.suggestions[0]);
+            g.items.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+          }
+        }
+        self._render();
+      }).catch(function () {});
+    }
+
+    _suggestApply(dates) {
+      var self = this;
+      var g = this._sugg;
+      var chosen = g.items.filter(function (item) { return dates.indexOf(item.date) >= 0; });
+      if (!chosen.length) return;
+      var payload = chosen.map(function (item) { return { date: item.date, recipe_id: item.recipe_id }; });
+      this._call({ type: "meal_planner/plan/apply_suggestions", suggestions: payload }).then(function () {
+        g.items = g.items.filter(function (item) { return dates.indexOf(item.date) < 0; });
+        g.message = "";
+        if (!g.items.length && !g.unfilled.length) self._sugg = null;
+        self._render();
+      }).catch(function () {});
     }
 
     _renderPicker() {
       var p = this._picker;
       var snap = this._snap;
-      var recipes = snap.recipes.slice();
+      var onDay = (snap.plan[p.date] || []).map(function (e) { return e.recipe_id; });
+      var recipes = snap.recipes.filter(function (r) { return onDay.indexOf(r.id) < 0; });
       var q = fold(p.search || "");
       recipes = recipes.filter(function (r) {
         if (p.tag && r.tags.indexOf(p.tag) < 0) return false;
@@ -405,7 +525,7 @@
       var self = this;
       var html =
         '<div class="overlay" data-action="close-picker"><div class="dialog" data-stop="1">' +
-        "<h3>" + esc(dayLabel(p.date)) + " – was gibt es?</h3>" +
+        "<h3>" + esc(dayLabel(p.date)) + " – Gericht hinzufügen</h3>" +
         '<div style="margin-bottom:10px">' +
         QUICK_TEXTS.map(function (t) { return '<button class="chip" data-action="set-text" data-text="' + esc(t) + '">' + esc(t) + "</button>"; }).join("") +
         '<div class="toolbar" style="margin-top:6px"><input id="mp-free-text" placeholder="Eigener Eintrag (z. B. Kantine)" style="flex:1" />' +
@@ -1017,7 +1137,7 @@
       if (!el) return;
       // Clicking the dark backdrop closes the picker; clicks inside the dialog must not.
       var act = el.getAttribute("data-action");
-      if ((act === "close-picker" || act === "close-ing") && el.classList.contains("overlay")) {
+      if ((act === "close-picker" || act === "close-ing" || act === "suggest-close") && el.classList.contains("overlay")) {
         // Close only for a real click on the dark backdrop: press AND release on it.
         // Picking an option in a native <select> list (e.g. "Stück") that reaches
         // beyond the dialog can end with a "click" on the backdrop although the
@@ -1093,15 +1213,43 @@
         case "clear-day":
           this._call({ type: "meal_planner/plan/clear", date: date }).catch(function () {});
           break;
+        case "remove-meal":
+          this._call({ type: "meal_planner/plan/remove", entry_id: el.getAttribute("data-entry") }).catch(function () {});
+          break;
         case "portions": {
-          var entry = this._snap.plan[date];
+          var entry = this._findEntry(el.getAttribute("data-entry"));
           if (!entry || entry.kind !== "recipe") break;
           var current = entry.portions || this._snap.settings.household_size;
           var next = Math.min(50, Math.max(1, current + Number(el.getAttribute("data-delta"))));
           var override = next === this._snap.settings.household_size ? null : next;
-          this._call({ type: "meal_planner/plan/set", date: date, recipe_id: entry.recipe_id, portions: override }).catch(function () {});
+          this._call({ type: "meal_planner/plan/portions", entry_id: entry.id, portions: override }).catch(function () {});
           break;
         }
+        case "suggest-open":
+          this._suggestOpen();
+          break;
+        case "suggest-close":
+          this._sugg = null;
+          this._render();
+          break;
+        case "suggest-reroll":
+          this._suggestReroll(date);
+          break;
+        case "suggest-reject":
+          var rejected = this._sugg.items.filter(function (item) { return item.date === date; });
+          if (rejected.length) this._sugg.rejected.push(rejected[0].recipe_id);
+          this._sugg.items = this._sugg.items.filter(function (item) { return item.date !== date; });
+          this._sugg.unfilled.push(date);
+          this._sugg.unfilled.sort();
+          this._sugg.message = "";
+          this._render();
+          break;
+        case "suggest-apply":
+          this._suggestApply([date]);
+          break;
+        case "suggest-apply-all":
+          this._suggestApply(this._sugg.items.map(function (item) { return item.date; }));
+          break;
         case "filter-tag":
           this._tagFilter = this._tagFilter === el.getAttribute("data-tag") ? "" : el.getAttribute("data-tag");
           this._render();
@@ -1262,7 +1410,7 @@
 
     _setPlan(msg) {
       var self = this;
-      msg.type = "meal_planner/plan/set";
+      msg.type = "meal_planner/plan/add";
       this._call(msg).then(function () {
         self._picker = null;
         self._render();

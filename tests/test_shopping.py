@@ -21,6 +21,12 @@ def _day(offset: int) -> str:
     return (dt_util.now().date() + timedelta(days=offset)).isoformat()
 
 
+async def _plan(coordinator, day: str, **kwargs) -> None:
+    """Replace whatever is planned on ``day`` by one dish."""
+    await coordinator.async_clear_plan(day)
+    await coordinator.async_add_meal(day, **kwargs)
+
+
 async def _ing(coordinator, name: str, unit: str | None = None) -> dict:
     existing = coordinator.ingredients.find_by_name(name)
     if existing is not None:
@@ -108,10 +114,10 @@ async def test_preview_scales_sums_and_converts(hass, init_integration) -> None:
     c = init_integration.runtime_data  # household 4
     pasta = await _recipe(c, "Pasta", [("Nudeln", 500, "g"), ("Zwiebel", 2, "Stück"), ("Salz", None, None)])
     stew = await _recipe(c, "Eintopf", [("Nudeln", 1, "kg"), ("Zwiebel", 100, "g")], portions=4)
-    await c.async_set_plan(_day(0), recipe_id=pasta["id"])  # 4 portions -> x2
-    await c.async_set_plan(_day(1), recipe_id=stew["id"])  # 4 portions -> x1
-    await c.async_set_plan(_day(2), recipe_id=pasta["id"], portions=1)  # x0.5
-    await c.async_set_plan(_day(3), text="Reste")
+    await _plan(c, _day(0), recipe_id=pasta["id"])  # 4 portions -> x2
+    await _plan(c, _day(1), recipe_id=stew["id"])  # 4 portions -> x1
+    await _plan(c, _day(2), recipe_id=pasta["id"], portions=1)  # x0.5
+    await _plan(c, _day(3), text="Reste")
 
     result = c.compute_shopping(None, None)
     by = {(p["name"], p["unit"]): p["amount"] for p in result["positions"]}
@@ -138,7 +144,7 @@ async def test_range_is_validated(hass, init_integration) -> None:
 async def test_preview_flags_what_bring_has_open(hass, with_bring, bring) -> None:
     c = with_bring
     await _recipe(c, "Pasta", [("Zwiebel", 2, "Stück"), ("Nudeln", 500, "g")])
-    await c.async_set_plan(_day(1), recipe_id="pasta")
+    await _plan(c, _day(1), recipe_id="pasta")
     bring["open"] = ["Zwiebeln", "Milch"]  # plural form still matches
 
     preview = await c.async_shopping_preview(None, None)
@@ -162,7 +168,7 @@ async def test_preview_without_bring_list(hass, init_integration) -> None:
 async def test_transfer_adds_items_with_quantity_and_remembers_days(hass, with_bring, bring) -> None:
     c = with_bring
     await _recipe(c, "Pasta", [("Nudeln", 500, "g"), ("Salz", None, None)])
-    await c.async_set_plan(_day(1), recipe_id="pasta")  # 4 portions -> 1000 g
+    await _plan(c, _day(1), recipe_id="pasta")  # 4 portions -> 1000 g
     items = [
         {"ingredient_id": "nudeln", "amount": 1.0, "unit": "kg"},
         {"ingredient_id": "salz", "amount": None, "unit": None},
@@ -181,14 +187,14 @@ async def test_transfer_adds_items_with_quantity_and_remembers_days(hass, with_b
 async def test_later_changes_only_add_the_difference(hass, with_bring, bring) -> None:
     c = with_bring
     await _recipe(c, "Pasta", [("Nudeln", 500, "g")])
-    await c.async_set_plan(_day(1), recipe_id="pasta", portions=2)  # 500 g
+    await _plan(c, _day(1), recipe_id="pasta", portions=2)  # 500 g
     await c.async_transfer_to_bring(None, None, items=[{"ingredient_id": "nudeln", "amount": 500, "unit": "g"}])
 
-    await c.async_set_plan(_day(1), recipe_id="pasta", portions=6)  # now 1500 g
+    await _plan(c, _day(1), recipe_id="pasta", portions=6)  # now 1500 g
     result = c.compute_shopping(None, None)
     assert [(p["name"], p["amount"], p["unit"]) for p in result["positions"]] == [("Nudeln", 1.0, "kg")]
 
-    await c.async_set_plan(_day(1), recipe_id="pasta", portions=1)  # only 250 g needed
+    await _plan(c, _day(1), recipe_id="pasta", portions=1)  # only 250 g needed
     result = c.compute_shopping(None, None)
     assert result["positions"] == []
     assert [(s["date"], s["name"], s["amount"], s["unit"]) for s in result["surplus"]] == [
@@ -197,14 +203,14 @@ async def test_later_changes_only_add_the_difference(hass, with_bring, bring) ->
 
     # Clearing the day and planning again does not forget what Bring got.
     await c.async_clear_plan(_day(1))
-    await c.async_set_plan(_day(1), recipe_id="pasta", portions=2)
+    await _plan(c, _day(1), recipe_id="pasta", portions=2)
     assert c.compute_shopping(None, None)["positions"] == []
 
 
 async def test_service_transfers_unedited_list_and_skips_open_items(hass, with_bring, bring) -> None:
     c = with_bring
     await _recipe(c, "Pasta", [("Nudeln", 500, "g"), ("Zwiebel", 2, "Stück")])
-    await c.async_set_plan(_day(1), recipe_id="pasta", portions=2)
+    await _plan(c, _day(1), recipe_id="pasta", portions=2)
     bring["open"] = ["Zwiebel"]
 
     response = await hass.services.async_call(DOMAIN, "transfer_to_bring", {}, blocking=True, return_response=True)
@@ -216,7 +222,7 @@ async def test_item_without_description_support_folds_quantity_into_name(hass, w
     c = with_bring
     hass.states.async_set(BRING, "0", {"supported_features": int(TodoListEntityFeature.CREATE_TODO_ITEM)})
     await _recipe(c, "Pasta", [("Nudeln", 500, "g")])
-    await c.async_set_plan(_day(1), recipe_id="pasta", portions=2)
+    await _plan(c, _day(1), recipe_id="pasta", portions=2)
     await c.async_transfer_to_bring(None, None, items=[{"ingredient_id": "nudeln", "amount": 500, "unit": "g"}])
     assert bring["added"] == [{"entity_id": BRING, "item": "Nudeln (500 g)"}]
 
@@ -224,7 +230,7 @@ async def test_item_without_description_support_folds_quantity_into_name(hass, w
 async def test_failed_transfer_remembers_nothing(hass, with_bring, bring) -> None:
     c = with_bring
     await _recipe(c, "Pasta", [("Nudeln", 500, "g")])
-    await c.async_set_plan(_day(1), recipe_id="pasta", portions=2)
+    await _plan(c, _day(1), recipe_id="pasta", portions=2)
 
     from homeassistant.exceptions import HomeAssistantError
 
@@ -242,7 +248,7 @@ async def test_merge_keeps_transfer_record(hass, with_bring, bring) -> None:
     c = with_bring
     await _recipe(c, "Pasta", [("Zwiebel", 2, "Stück")])
     await _ing(c, "Zwiebeln", "Stück")
-    await c.async_set_plan(_day(1), recipe_id="pasta", portions=2)
+    await _plan(c, _day(1), recipe_id="pasta", portions=2)
     await c.async_transfer_to_bring(None, None, items=[{"ingredient_id": "zwiebel", "amount": 2, "unit": "Stück"}])
 
     await c.async_merge_ingredients("zwiebel", "zwiebeln")
@@ -252,7 +258,7 @@ async def test_merge_keeps_transfer_record(hass, with_bring, bring) -> None:
 async def test_websocket_preview_and_transfer(hass, hass_ws_client, with_bring, bring) -> None:
     c = with_bring
     await _recipe(c, "Pasta", [("Nudeln", 500, "g")])
-    await c.async_set_plan(_day(1), recipe_id="pasta", portions=2)
+    await _plan(c, _day(1), recipe_id="pasta", portions=2)
     client = await hass_ws_client(hass)
 
     await client.send_json({"id": 1, "type": "meal_planner/shopping/preview"})

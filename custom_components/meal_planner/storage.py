@@ -7,7 +7,8 @@ Each collection owns one ``Store`` file:
 * ``meal_planner.recipes``     - recipes (id = generated slug of the name)
 * ``meal_planner.ingredients`` - ingredient catalog (the only place ingredient
   names live; recipes reference it by id, so one product = one entry)
-* ``meal_planner.plan``        - one entry per day (id = ISO date)
+* ``meal_planner.plan``        - plan entries; a day may hold several (each a
+  recipe or free text), every entry has its own generated id
 * ``meal_planner.transfers``   - per day: what has already been handed to Bring
 
 Only schema validation and uniqueness rules live here; the cross-collection
@@ -173,7 +174,7 @@ INGREDIENT_UPDATE_SCHEMA = vol.Schema(
 
 
 def _validate_plan_item(item: dict[str, Any]) -> dict[str, Any]:
-    """A day is either a recipe or a free-text entry, never both."""
+    """An entry is either a recipe or a free-text entry, never both."""
     if item["kind"] == PLAN_KIND_RECIPE:
         if not item.get("recipe_id") or item.get("text"):
             raise vol.Invalid("a recipe entry needs recipe_id and no text")
@@ -285,27 +286,24 @@ class IngredientCollection(_MealPlannerCollection):
 
 
 class PlanCollection(_MealPlannerCollection):
-    """One entry per day.
+    """Plan entries; one day can hold several of them.
 
-    The collection id is the slugified ISO date ("2026-11-07" -> "2026_11_07",
-    the IDManager always slugifies suggestions). Callers go through
-    ``id_for`` / ``get_by_date`` instead of building ids by hand.
+    Every entry carries its ``date``; the collection id is generated from the
+    date and the recipe/text (``2026_11_07_gulasch``, the IDManager appends a
+    suffix on clashes). Entries stored by earlier versions (id = date only)
+    stay valid as they are. Callers go through ``get_by_date`` instead of
+    building ids by hand.
     """
 
     CREATE_SCHEMA = PLAN_CREATE_SCHEMA
     UPDATE_SCHEMA = PLAN_UPDATE_SCHEMA
 
-    @staticmethod
-    def id_for(date_iso: str) -> str:
-        """Collection id of the entry for ``date_iso``."""
-        return slugify(date_iso)
-
-    def get_by_date(self, date_iso: str) -> dict[str, Any] | None:
-        """Return the entry planned for ``date_iso``, if any."""
-        return self.data.get(self.id_for(date_iso))
+    def get_by_date(self, date_iso: str) -> list[dict[str, Any]]:
+        """Return all entries planned for ``date_iso`` (in the order they were added)."""
+        return [entry for entry in self.data.values() if entry["date"] == date_iso]
 
     def _get_suggested_id(self, info: dict) -> str:
-        return self.id_for(info["date"])
+        return f"{info['date']}_{info.get('recipe_id') or info.get('text') or 'eintrag'}"
 
     async def _update_data(self, item: dict, update_data: dict) -> dict:
         updated = await super()._update_data(item, update_data)

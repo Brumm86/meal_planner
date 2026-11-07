@@ -47,6 +47,138 @@
           "description": "Last day (default: last day of the plan window)."
         }
       }
+    },
+    "add_meal": {
+      "name": "Add meal",
+      "description": "Adds a dish (recipe or free text) to a day. A day can hold several dishes.",
+      "fields": {
+        "date": {
+          "name": "Day",
+          "description": "The day (today or later)."
+        },
+        "recipe": {
+          "name": "Recipe",
+          "description": "Name or ID of a recipe. Alternatively give free text."
+        },
+        "text": {
+          "name": "Free text",
+          "description": "A dish without a recipe, e.g. \"restaurant\"."
+        },
+        "portions": {
+          "name": "Portions",
+          "description": "Number of portions (default: household size). Recipes only."
+        }
+      }
+    },
+    "remove_meal": {
+      "name": "Remove meal",
+      "description": "Removes one dish from a day; the other dishes of the day stay.",
+      "fields": {
+        "date": {
+          "name": "Day",
+          "description": "The day."
+        },
+        "recipe": {
+          "name": "Recipe",
+          "description": "Name or ID of the recipe. Alternatively give the free text."
+        },
+        "text": {
+          "name": "Free text",
+          "description": "The free text of the dish."
+        }
+      }
+    },
+    "clear_day": {
+      "name": "Clear day",
+      "description": "Removes all dishes of a day.",
+      "fields": {
+        "date": {
+          "name": "Day",
+          "description": "The day."
+        }
+      }
+    },
+    "get_plan": {
+      "name": "Get plan",
+      "description": "Returns the plan for a range, per day with all dishes.",
+      "fields": {
+        "start_date": {
+          "name": "From",
+          "description": "First day (default: today)."
+        },
+        "end_date": {
+          "name": "To",
+          "description": "Last day (default: last day of the plan window)."
+        }
+      }
+    },
+    "suggest_meals": {
+      "name": "Suggest meals",
+      "description": "Suggests recipes from the existing ones, by default for the days of the plan window without a dish. Recipes not planned for the longest time come first. Nothing is stored; use \"Apply suggestions\" to put them into the plan.",
+      "fields": {
+        "dates": {
+          "name": "Days",
+          "description": "Only suggest for these days (list of dates, also if something is planned there)."
+        },
+        "exclude_recipes": {
+          "name": "Exclude recipes",
+          "description": "Recipes (name or ID) that must not be suggested, e.g. the previous suggestion when re-rolling."
+        }
+      }
+    },
+    "apply_suggestions": {
+      "name": "Apply suggestions",
+      "description": "Puts suggestions into the plan. A recipe already planned on that day is skipped.",
+      "fields": {
+        "suggestions": {
+          "name": "Suggestions",
+          "description": "List of entries with date, recipe (name or ID) and optionally portions."
+        }
+      }
+    },
+    "create_recipe": {
+      "name": "Create recipe",
+      "description": "Creates a recipe. Ingredients are matched to the catalog by name; missing ones are created.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Name of the recipe."
+        },
+        "base_portions": {
+          "name": "Portions",
+          "description": "Portions the amounts are for (default: household size)."
+        },
+        "duration_min": {
+          "name": "Duration",
+          "description": "Preparation time in minutes."
+        },
+        "tags": {
+          "name": "Tags",
+          "description": "List of tags."
+        },
+        "notes": {
+          "name": "Notes",
+          "description": "Free notes."
+        },
+        "instructions": {
+          "name": "Instructions",
+          "description": "Preparation steps."
+        },
+        "ingredients": {
+          "name": "Ingredients",
+          "description": "List of entries with name and optionally amount and unit (g, kg, ml, l, Stück, EL, TL, Bund, Packung, Dose, Zehe, Prise)."
+        }
+      }
+    },
+    "delete_recipe": {
+      "name": "Delete recipe",
+      "description": "Deletes a recipe unless it is still planned today or later.",
+      "fields": {
+        "recipe": {
+          "name": "Recipe",
+          "description": "Name or ID of the recipe."
+        }
+      }
     }
   },
   "exceptions": {

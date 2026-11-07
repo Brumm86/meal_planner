@@ -121,10 +121,10 @@ async def test_plan_commands_and_errors(hass, hass_ws_client, init_integration) 
     assert (await client.receive_json())["success"]
 
     await client.send_json(
-        {"id": 2, "type": "meal_planner/plan/set", "date": _day(1), "recipe_id": "gulasch", "portions": 2}
+        {"id": 2, "type": "meal_planner/plan/add", "date": _day(1), "recipe_id": "gulasch", "portions": 2}
     )
     assert (await client.receive_json())["success"]
-    entry = init_integration.runtime_data.data["plan"][_day(1)]
+    entry = init_integration.runtime_data.data["plan"][_day(1)][0]
     assert entry["recipe_id"] == "gulasch" and entry["portions"] == 2
 
     # Domain errors carry a stable code the card can show.
@@ -137,11 +137,11 @@ async def test_plan_commands_and_errors(hass, hass_ws_client, init_integration) 
     await client.send_json({"id": 5, "type": "meal_planner/recipe/delete", "recipe_id": "gulasch"})
     assert (await client.receive_json())["success"]
 
-    await client.send_json({"id": 6, "type": "meal_planner/plan/set", "date": _day(-1), "text": "x"})
+    await client.send_json({"id": 6, "type": "meal_planner/plan/add", "date": _day(-1), "text": "x"})
     response = await client.receive_json()
     assert not response["success"] and response["error"]["code"] == "date_in_past"
 
-    await client.send_json({"id": 7, "type": "meal_planner/plan/set", "date": _day(1)})
+    await client.send_json({"id": 7, "type": "meal_planner/plan/add", "date": _day(1)})
     response = await client.receive_json()
     assert not response["success"] and response["error"]["code"] == "invalid_format"
 
